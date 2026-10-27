@@ -50,6 +50,22 @@ class Listings(TableModel, name='listings'):
 
 Shoppers can also ask a question, like "something warm to read by, under $150", and get matching listings back from `POST /ask`. Gemini calls the app's `find_listings` query as a tool, Pixeltable runs the query, and Gemini picks from the results. If your agents already run on Pydantic AI, `agent.py` does the same job as a Pydantic AI agent that reads the same listings table and returns the same `Picks` model.
 
+## Explore it with your coding agent
+
+To have a coding agent such as Claude Code, Cursor, or Codex run the app for you, first install the Pixeltable skill in this folder, so the agent knows the `pxt` commands:
+
+```bash
+uv sync
+source .venv/bin/activate
+pxt skills install
+```
+
+Then paste this prompt into your agent:
+
+```text
+Run this app locally by following the "Run the app" steps in README.md. GEMINI_API_KEY is already set. Post one listing from samples/, poll its job_url until status is done, then show me the stored row with pxt get market/listings <id> --cols title,price,narration,promo, using the id from the job's result. Then walk me through the Listings class in app.py: for each column, say what the column stores or computes, and which other columns that column reads. Use the pxt CLI to look at the tables. Don't change app.py.
+```
+
 ## Run the app
 
 You need Python 3.12 to 3.14, [uv](https://docs.astral.sh/uv/), `ffmpeg`, and `GEMINI_API_KEY` set in your environment.
@@ -84,13 +100,25 @@ The response has a `job_url`. Paste it in place of `<job_url>` and run this unti
 curl <job_url>
 ```
 
-**4. Look at what Pixeltable stored.** Paste the `id` from the job's `result` in place of `<id>`.
+When `status` is `done`, `result` is the new listing:
+
+- `details` is a `ListingDetails`, the Pydantic model in `app.py`, filled in from Gemini's reply to the three photos: the title, category, condition, color, description, and the pitch the video narrates. Pydantic checked Gemini's reply against that model before Pixeltable stored it.
+- `title` is copied out of `details` into a column of its own.
+- `promo` is a link to the video. Open the link in your browser to watch the video.
+- `id` is the listing's id, which you need in the next step.
+
+**4. See the listing's row in Pixeltable.** The API sent back only some of the listing's columns. The row in the `listings` table also keeps the narration audio that Gemini recorded for the video. Give `pxt get` the table, `market/listings` (`market` is the name from step 2), then the `id` from step 3's `result`. Use your own `id` in place of the one below. `--cols` picks the columns to show.
 
 ```bash
-pxt get market/listings <id> --cols title,price,details,promo   # the new listing
-pxt rows market/listings --cols title,price                     # every listing so far
-pxt errors market/listings                                       # rows where a Gemini call or the video failed
-pxt dashboard                                                    # open the Pixeltable dashboard
+pxt get market/listings 01a17fad-c0b9-72f7-8bf3-385607e45449 --cols title,price,narration,promo
+```
+
+`narration` and `promo` are file paths on your machine, so you can play both files.
+
+If Gemini or the video fails for a listing, this command shows which listing and why:
+
+```bash
+pxt errors market/listings
 ```
 
 **5. Post the 19 sample listings.**
