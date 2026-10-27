@@ -1,0 +1,5 @@
+.venv/
+.pxthome/
+scratch/
+__pycache__/
+.env

@@ -1,0 +1,25 @@
+[project]
+name = "pixeltable-marketplace"
+version = "0.1.0"
+description = "A FastAPI + Pydantic marketplace where Pixeltable is the database and runs the AI on the photos"
+readme = "README.md"
+requires-python = ">=3.12,<3.15"
+dependencies = [
+    "fastapi>=0.162.0",
+    "logfire>=5.4.0",
+    "openai>=3.40.0",
+    "pixeltable[serve]==0.7.19",
+    "pydantic-ai-harness[pixeltable]",
+    "pydantic-ai-slim[openai]",
+    "torch>=2.14.1",
+    "transformers>=5.21.0",
+]
+
+[[tool.pixeltable.database]]
+
+[tool.uv.sources]
+pydantic-ai-slim = { git = "https://github.com/pierrebrunelle/pydantic-ai", subdirectory = "pydantic_ai_slim", rev = "codex/pixeltable-harness-port" }
+pydantic-ai-harness = { git = "https://github.com/pierrebrunelle/pydantic-ai", subdirectory = "src/pydantic_ai_harness", rev = "codex/pixeltable-harness-port" }
+# The local database. vars supply the values of the config vars a schema declares; a hosted
+# database is a second entry, named by its uri.
+# vars.media_dest = 's3://bucket/prefix'
