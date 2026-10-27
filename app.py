@@ -2,7 +2,10 @@
 
 A seller sends three photos. Pixeltable checks each one is an image, a model writes the
 listing into `ListingDetails`, and the photos become a narrated listing video. Buyers search
-the listings by text or by photo.
+the listings by text or by photo, or ask the buyer's agent, which is a table too: each question
+is a row, and Gemini answers it by calling the app's own query as a tool (`pxt.tools`).
+
+The same table also works with Pydantic AI: see agent.py.
 
     pxt schema update app.py market -f
     pxt service update app.py market -f
@@ -18,8 +21,8 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 import pixeltable as pxt
-from pixeltable.functions import gemini, video
-from pixeltable.functions.uuid import uuid7
+from pixeltable.functions import gemini, json, video
+from pixeltable.functions.uuid import to_string, uuid7
 from pixeltable.serving import FastAPIRouter
 
 
@@ -42,6 +45,20 @@ class Listing(BaseModel):
     price: float
     title: str
     details: ListingDetails
+
+
+class Pick(BaseModel):
+    listing_id: UUID
+    title: str
+    price: float
+    why: str = Field(description='Why this listing fits what the buyer asked for, in one sentence')
+
+
+class Picks(BaseModel):
+    """The buyer's agent's answer. Both agents return it: the one in this file and agent.py."""
+
+    picks: list[Pick] = Field(description='Only listings that fit; an empty list when none do')
+    note: str = Field(description='One or two sentences to the buyer')
 
 
 TableModel = pxt.model_base()
@@ -142,6 +159,56 @@ def similar(photo: pxt.Image, limit: int = 5):
     )
 
 
+@pxt.query
+def find_listings(looking_for: str, max_price: float):
+    """Find listings whose photos match what the buyer is looking for, at or under max_price.
+
+    Args:
+        looking_for: What the buyer wants, in their words, without the price.
+        max_price: The most the buyer will pay, in dollars. When they don't say, use 100000.
+    """
+    score = Listings.photo_1.similarity(string=looking_for)
+    return (
+        Listings.where(Listings.price <= max_price)
+        .order_by(score, asc=False)
+        .limit(5)
+        .select(listing_id=to_string(Listings.id), title=Listings.title, price=Listings.price,
+                description=Listings.description, score=score)
+    )
+
+
+TOOLS = pxt.tools(find_listings)
+ASK_INSTRUCTIONS = 'You help buyers on a secondhand marketplace. Call find_listings to search the listings.'
+PICK_INSTRUCTIONS = (
+    '\n\nRecommend only the listings that fit what the buyer asked for, with their listing_id, title, and '
+    'price exactly as found. An empty list is a fine answer.\n\nListings the search found: '
+)
+PICKS_CONFIG = {'response_mime_type': 'application/json', 'response_json_schema': Picks.model_json_schema()}
+
+
+@pxt.udf
+def parse_picks(raw: str) -> pxt.Json[Picks]:
+    return Picks.model_validate_json(raw).model_dump(mode='json')
+
+
+class Asks(TableModel, name='asks'):
+    """The buyer's agent: each question is a row, and every step of the answer is a column."""
+
+    id = pxt.Column(value=uuid7(), primary_key=True)
+    question: pxt.String
+
+    # Gemini decides how to call the app's own query, and Pixeltable runs the call.
+    tool_call = gemini.generate_content(
+        question, model='gemini-3.8-flash', tools=TOOLS, config={'system_instruction': ASK_INSTRUCTIONS}
+    )
+    found = gemini.invoke_tools(TOOLS, tool_call)
+    # Gemini picks from what the query found, into the app's own Pydantic model.
+    answer = gemini.generate_content(
+        question + PICK_INSTRUCTIONS + json.dumps(found), model='gemini-3.8-flash', config=PICKS_CONFIG
+    )
+    picks = parse_picks(answer.candidates[0].content.parts[0].text.astype(pxt.String))
+
+
 router = FastAPIRouter(name='market')
 router.add_insert_route(
     Listings,
@@ -152,6 +219,7 @@ router.add_insert_route(
 )
 router.add_query_route(path='/search', query=search, method='get')
 router.add_query_route(path='/similar', query=similar, uploadfile_inputs=['photo'])
+router.add_insert_route(Asks, path='/ask', inputs=[Asks.question], outputs=[Asks.id, Asks.found, Asks.picks])
 
 
 api = FastAPI(title='Marketplace')
@@ -161,10 +229,9 @@ api.include_router(router)
 @api.get('/listings/{listing_id}')
 def get_listing(listing_id: UUID) -> Listing:
     """An ordinary FastAPI route that returns a row as the app's own Pydantic model."""
-    listings = pxt.get_table('market.listings')
     rows = (
-        listings.where(listings.id == listing_id)
-        .select(listings.id, listings.seller, listings.price, listings.title, listings.details)
+        Listings.where(Listings.id == listing_id)
+        .select(Listings.id, Listings.seller, Listings.price, Listings.title, Listings.details)
         .collect()
     )
     listing = next(rows.to_pydantic(Listing), None)
