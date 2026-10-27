@@ -1,21 +1,48 @@
-"""The marketplace's tables, the AI that runs on them, and their routes.
+"""The whole marketplace: its Pydantic models, its tables, the AI that runs on them, and its API.
 
 A seller sends three photos. Pixeltable checks each one is an image, a model writes the
 listing into `ListingDetails`, and the photos become a narrated listing video. Buyers search
 the listings by text or by photo.
+
+    pxt schema update app.py market -f
+    pxt service update app.py market -f
 """
 
 import tempfile
+from typing import Literal
+from uuid import UUID
 
 import av
 import PIL.Image
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
 
 import pixeltable as pxt
 from pixeltable.functions import huggingface, openai, video
 from pixeltable.functions.uuid import uuid7
 from pixeltable.serving import FastAPIRouter
 
-from models import ListingDetails
+
+class ListingDetails(BaseModel):
+    """What the model writes from a seller's photos."""
+
+    title: str = Field(description='A listing title, under 60 characters')
+    category: Literal['cameras', 'bikes', 'home', 'bags', 'instruments', 'other']
+    condition: Literal['new', 'like new', 'good', 'fair']
+    color: str
+    description: str = Field(description='Two or three sentences for buyers, about only what the photos show')
+    pitch: str = Field(description='Narration for a 10-second listing video: two short spoken sentences, 15 to 25 words')
+
+
+class Listing(BaseModel):
+    """A listing as the storefront shows it."""
+
+    id: UUID
+    seller: str
+    price: float
+    title: str
+    details: ListingDetails
+
 
 TableModel = pxt.model_base()
 
@@ -138,3 +165,22 @@ router.add_insert_route(
 )
 router.add_query_route(path='/search', query=search, method='get')
 router.add_query_route(path='/similar', query=similar, uploadfile_inputs=['photo'])
+
+
+api = FastAPI(title='Marketplace')
+api.include_router(router)
+
+
+@api.get('/listings/{listing_id}')
+def get_listing(listing_id: UUID) -> Listing:
+    """An ordinary FastAPI route that returns a row as the app's own Pydantic model."""
+    listings = pxt.get_table('market.listings')
+    rows = (
+        listings.where(listings.id == listing_id)
+        .select(listings.id, listings.seller, listings.price, listings.title, listings.details)
+        .collect()
+    )
+    listing = next(rows.to_pydantic(Listing), None)
+    if listing is None:
+        raise HTTPException(status_code=404, detail='No such listing')
+    return listing
