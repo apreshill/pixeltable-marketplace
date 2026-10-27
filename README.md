@@ -2,6 +2,8 @@
 
 A secondhand marketplace built with FastAPI and Pydantic, with [Pixeltable](https://github.com/pixeltable/pixeltable) as its database.
 
+If you use Pydantic, you define a model once and use it everywhere. Here the database uses it too. `ListingDetails` is the JSON Gemini must return when it writes a listing, the type of the column that stores it, and part of what `GET /listings/{id}` returns. Its fields are also queryable like any column: `Listings.where(Listings.details.category == 'home')`.
+
 ```
 Without Pixeltable                         With Pixeltable
 
@@ -19,7 +21,7 @@ FastAPI + Pydantic                         FastAPI + Pydantic
 When a seller posts three photos and a price, Pixeltable:
 
 - refuses a file that isn't an image, with a 422
-- has Gemini write the title, description, and details into the app's Pydantic model, `ListingDetails`
+- has Gemini write the listing from the photos
 - makes a 10-second video from the photos, narrated by Gemini
 - adds the first photo to search, so shoppers can find the listing by describing what they want
 
