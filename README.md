@@ -52,44 +52,70 @@ Shoppers can also ask a question, like "something warm to read by, under $150", 
 
 ## Run the app
 
-You need Python 3.12 to 3.14, [uv](https://docs.astral.sh/uv/), `ffmpeg`, and `GEMINI_API_KEY` set in your environment. The `-f` flag skips the confirmation prompts.
+You need Python 3.12 to 3.14, [uv](https://docs.astral.sh/uv/), `ffmpeg`, and `GEMINI_API_KEY` set in your environment.
+
+**1. Install.**
 
 ```bash
 uv sync
 source .venv/bin/activate
-pxt schema update app.py market -f   # create the tables in a local database named market
-pxt service update app.py market -f  # start the app on localhost
-pxt service list                     # print the app's URL
-URL=http://127.0.0.1:PORT            # replace PORT with the port pxt service list printed
 ```
 
-Post a listing with three photos and a price. Gemini writes the listing and Pixeltable makes the promo video, which takes about 15 seconds, so Pixeltable runs the insert as a background job. The POST answers right away with a job `id` and a `job_url` to poll.
+**2. Create the tables and start the app.** The `-f` flag skips the confirmation prompts.
 
 ```bash
-curl -X POST $URL/listings -F seller=you -F price=260 \
+pxt schema update app.py market -f
+pxt service update app.py market -f
+pxt service list
+```
+
+`pxt service list` prints the app's URL, such as `http://127.0.0.1:53924`. Paste that URL in place of `<url>` in the steps below.
+
+**3. Post a listing.** Gemini writes the listing and Pixeltable makes a promo video. That takes about 15 seconds, so the request returns a background job.
+
+```bash
+curl -X POST <url>/listings -F seller=you -F price=260 \
   -F photo_1=@samples/guitar-1.jpg -F photo_2=@samples/guitar-2.jpg -F photo_3=@samples/guitar-3.jpg
-curl JOB_URL   # the job_url from the response; "status" goes from "pending" to "done" (or "error")
 ```
 
-When the job is done, the job's `result` has the listing's `id` (not the job id), the `details` Gemini wrote, and a link to the `promo` video.
-
-Look at what Pixeltable stored:
+The response has a `job_url`. Paste it in place of `<job_url>` and run this until `status` is `done`:
 
 ```bash
-pxt get market/listings ID --cols title,price,details,promo   # the new row; ID is the id in the job's result
-pxt rows market/listings --cols title,price                   # every listing so far
-pxt errors market/listings                                     # rows where a Gemini call or the promo video failed
-pxt dashboard                                                  # open the Pixeltable dashboard
+curl <job_url>
 ```
 
-Post the 19 sample listings, then call `/search` and `/ask`:
+**4. Look at what Pixeltable stored.** Paste the `id` from the job's `result` in place of `<id>`.
 
 ```bash
-python scripts/seed.py $URL
-curl "$URL/search?q=warm%20light%20for%20a%20reading%20nook&limit=3"
-curl -X POST $URL/ask -H 'content-type: application/json' \
-  -d '{"question": "Something warm to read by, under $150?"}'   # also returns a job_url; the answer is in "result"
-python agent.py "Something warm to read by, under \$150?"   # the same question, answered by the Pydantic AI agent
+pxt get market/listings <id> --cols title,price,details,promo   # the new listing
+pxt rows market/listings --cols title,price                     # every listing so far
+pxt errors market/listings                                       # rows where a Gemini call or the video failed
+pxt dashboard                                                    # open the Pixeltable dashboard
+```
+
+**5. Post the 19 sample listings.**
+
+```bash
+python scripts/seed.py <url>
+```
+
+**6. Search the photos in words.**
+
+```bash
+curl "<url>/search?q=warm%20light%20for%20a%20reading%20nook&limit=3"
+```
+
+**7. Ask a question.** `/ask` is a background job too, so poll its `job_url` the same way.
+
+```bash
+curl -X POST <url>/ask -H 'content-type: application/json' \
+  -d '{"question": "Something warm to read by, under $150?"}'
+```
+
+The same question, answered by the Pydantic AI agent:
+
+```bash
+python agent.py "Something warm to read by, under \$150?"
 ```
 
 ## Files
