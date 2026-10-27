@@ -1,15 +1,19 @@
 # pixeltable-marketplace
 
-A secondhand marketplace built with FastAPI and Pydantic, where [Pixeltable](https://github.com/pixeltable/pixeltable) is the database and runs the AI on the photos.
+A secondhand marketplace where [Pixeltable](https://github.com/pixeltable/pixeltable) is the backend. It stores the listings and their photos, runs Gemini on each new listing, and turns its tables into FastAPI routes. The models are Pydantic, as you'd expect; Pixeltable is the part you'd otherwise build out of Postgres, a bucket of files, a worker queue, and a vector database.
 
-A seller posts three photos and a price. In one request:
+When a seller posts three photos and a price, Pixeltable:
 
-- each photo is checked as an image when it's inserted, so a PDF or a video renamed `.jpg` gets a 422
-- a model reads the photos and writes the listing into the app's own Pydantic model, `ListingDetails`
-- the photos become a 10-second listing video, with narration, the title, and the price
-- the listing becomes searchable by what its photos show
+- opens each photo before it stores the row, so a PDF renamed `.jpg` is refused with a 422
+- sends the three photos to Gemini and stores the listing it writes as your Pydantic model, `ListingDetails`
+- turns the photos into a 10-second listing video with narration, the title, and the price
+- indexes the main photo, so a buyer finds the listing by what's in it
 
-Buyers search the listings, or ask a buyer's agent. The agent is built two ways, side by side, and both read the same table and return the same Pydantic model, `Picks`.
+In `app.py`, those four steps are the `Listings` class: column types, computed columns, and an index. Pixeltable runs them on every new listing. You don't write the upload check, the worker that calls Gemini, or the script that keeps the search index current.
+
+Pixeltable also runs the buyer's agent, as a second table. Each question is a row in `asks`: Gemini calls the app's own search query as a tool, Pixeltable runs the call, and the answer comes back as your Pydantic model, `Picks`. Every step stays on the row, so you can query what the agent searched for and what it found.
+
+If your agents already run on Pydantic AI, `agent.py` connects one to the `listings` table with Pixeltable's capability for Pydantic AI Harness.
 
 ## The two buyer's agents
 
