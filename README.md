@@ -41,13 +41,33 @@ source .venv/bin/activate
 pxt schema update app.py market -f   # create the tables in a local database named market
 pxt service update app.py market -f  # start the app on localhost
 pxt service list                     # print the app's URL
-URL=http://127.0.0.1:PORT            # the URL that pxt service list printed
+URL=http://127.0.0.1:PORT            # replace PORT with the port pxt service list printed
+```
 
-python scripts/seed.py $URL          # post 19 sample listings
+Post a listing with three photos and a price. The response, after about 15 seconds, has the listing's `id`, the `details` Gemini wrote, and a link to the `promo` video.
+
+```bash
+curl -X POST $URL/listings -F seller=you -F price=260 \
+  -F photo_1=@samples/guitar-1.jpg -F photo_2=@samples/guitar-2.jpg -F photo_3=@samples/guitar-3.jpg
+```
+
+Look at what Pixeltable stored:
+
+```bash
+pxt get market/listings ID --cols title,price,details,promo   # the new row; ID is the id from the response
+pxt rows market/listings --cols title,price                   # every listing so far
+pxt errors market/listings                                     # rows where a Gemini call or the promo video failed
+pxt dashboard                                                  # open the Pixeltable dashboard
+```
+
+Post the 19 sample listings, then call `/search` and `/ask`:
+
+```bash
+python scripts/seed.py $URL
 curl "$URL/search?q=warm%20light%20for%20a%20reading%20nook&limit=3"
 curl -X POST $URL/ask -H 'content-type: application/json' \
   -d '{"question": "Something warm to read by, under $150?"}'
-python agent.py "Something warm to read by, under \$150?"
+python agent.py "Something warm to read by, under \$150?"   # the same question, answered by the Pydantic AI agent
 ```
 
 ## Files
