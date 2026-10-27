@@ -68,16 +68,21 @@ Run this app locally by following the "Run the app" steps in README.md. GEMINI_A
 
 ## Run the app
 
-You need Python 3.12 to 3.14, [uv](https://docs.astral.sh/uv/), `ffmpeg`, and `GEMINI_API_KEY` set in your environment.
+You need:
 
-**1. Install.**
+- Python 3.12 to 3.14
+- [uv](https://docs.astral.sh/uv/)
+- `ffmpeg`
+- `GEMINI_API_KEY` set in your environment
+
+### 1. Install
 
 ```bash
 uv sync
 source .venv/bin/activate
 ```
 
-**2. Create the tables and start the app.** The `-f` flag skips the confirmation prompts.
+### 2. Create the tables and start the app
 
 ```bash
 pxt schema update app.py market -f
@@ -85,62 +90,63 @@ pxt service update app.py market -f
 pxt service list
 ```
 
-`pxt service list` prints the app's URL, such as `http://127.0.0.1:53924`. Paste that URL in place of `<url>` in the steps below.
+`pxt service list` prints the app's URL, e.g. `http://127.0.0.1:53924`. Use that URL as `<url>` below.
 
-**3. Post a listing.** Gemini writes the listing and Pixeltable makes a promo video. That takes about 15 seconds, so the request returns a background job.
+### 3. Post a listing
 
 ```bash
 curl -X POST <url>/listings -F seller=you -F price=260 \
   -F photo_1=@samples/guitar-1.jpg -F photo_2=@samples/guitar-2.jpg -F photo_3=@samples/guitar-3.jpg
 ```
 
-The response has a `job_url`. Paste it in place of `<job_url>` and run this until `status` is `done`:
+The app returns a `job_url` right away, because Gemini and the video take about 15 seconds. Check the job until `status` is `done`:
 
 ```bash
 curl <job_url>
 ```
 
-When `status` is `done`, `result` is the new listing:
+The finished job's `result` is your listing:
 
-- `details` is a `ListingDetails`, the Pydantic model in `app.py`, filled in from Gemini's reply to the three photos: the title, category, condition, color, description, and the pitch the video narrates. Pydantic checked Gemini's reply against that model before Pixeltable stored it.
-- `title` is copied out of `details` into a column of its own.
-- `promo` is a link to the video. Open the link in your browser to watch the video.
-- `id` is the listing's id, which you need in the next step.
+- `details`: what Gemini wrote from the photos, as the Pydantic model `ListingDetails`
+- `promo`: the video. Open the link in a browser.
+- `id`: the listing's ID, for step 4
 
-**4. See the listing's row in Pixeltable.** The API sent back only some of the listing's columns. The row in the `listings` table also keeps the narration audio that Gemini recorded for the video. Give `pxt get` the table, `market/listings` (`market` is the name from step 2), then the `id` from step 3's `result`. Use your own `id` in place of the one below. `--cols` picks the columns to show.
+### 4. See the stored row
 
 ```bash
-pxt get market/listings 01a17fad-c0b9-72f7-8bf3-385607e45449 --cols title,price,narration,promo
+pxt get market/listings <id> --cols title,price,narration,promo
 ```
 
-`narration` and `promo` are file paths on your machine, so you can play both files.
+The row also has the narration audio, which the API didn't return. `narration` and `promo` are file paths you can open.
 
-If Gemini or the video fails for a listing, this command shows which listing and why:
+If a listing fails, see why:
 
 ```bash
 pxt errors market/listings
 ```
 
-**5. Post the 19 sample listings.**
+### 5. Post the 19 sample listings
 
 ```bash
 python scripts/seed.py <url>
 ```
 
-**6. Search the photos in words.**
+### 6. Search the photos in words
 
 ```bash
 curl "<url>/search?q=warm%20light%20for%20a%20reading%20nook&limit=3"
 ```
 
-**7. Ask a question.** `/ask` is a background job too, so poll its `job_url` the same way.
+### 7. Ask a question
 
 ```bash
 curl -X POST <url>/ask -H 'content-type: application/json' \
   -d '{"question": "Something warm to read by, under $150?"}'
 ```
 
-The same question, answered by the Pydantic AI agent:
+The `/ask` request returns a `job_url` too. The answer is in the finished job's `result`.
+
+Ask the same question through the Pydantic AI agent:
 
 ```bash
 python agent.py "Something warm to read by, under \$150?"
