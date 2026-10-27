@@ -18,7 +18,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 import pixeltable as pxt
-from pixeltable.functions import huggingface, openai, video
+from pixeltable.functions import gemini, video
 from pixeltable.functions.uuid import uuid7
 from pixeltable.serving import FastAPIRouter
 
@@ -46,10 +46,7 @@ class Listing(BaseModel):
 
 TableModel = pxt.model_base()
 
-LISTING_FORMAT = {
-    'type': 'json_schema',
-    'json_schema': {'name': 'listing', 'schema': ListingDetails.model_json_schema()},
-}
+LISTING_CONFIG = {'response_mime_type': 'application/json', 'response_json_schema': ListingDetails.model_json_schema()}
 PROMPT = 'Write a marketplace listing for the item in these photos. Describe only what the photos show.'
 
 
@@ -92,27 +89,15 @@ class Listings(TableModel, name='listings'):
     photo_3: pxt.Image
 
     # A model writes the listing from the photos, into the app's own Pydantic model.
-    response = openai.chat_completions(
-        messages=[
-            {
-                'role': 'user',
-                'content': [
-                    {'type': 'text', 'text': PROMPT},
-                    {'type': 'image_url', 'image_url': photo_1},
-                    {'type': 'image_url', 'image_url': photo_2},
-                    {'type': 'image_url', 'image_url': photo_3},
-                ],
-            }
-        ],
-        model='gpt-5.4-mini',
-        model_kwargs={'response_format': LISTING_FORMAT},
+    response = gemini.generate_content(
+        [PROMPT, photo_1, photo_2, photo_3], model='gemini-3.8-flash', config=LISTING_CONFIG
     )
-    details = parse_details(response.choices[0].message.content.astype(pxt.String))
+    details = parse_details(response.candidates[0].content.parts[0].text.astype(pxt.String))
     title = details.title.astype(pxt.String)
     description = details.description.astype(pxt.String)
 
     # The photos become a narrated listing video.
-    narration = openai.speech(details.pitch.astype(pxt.String), model='tts-1', voice='alloy')
+    narration = gemini.generate_speech(details.pitch.astype(pxt.String), model='gemini-3.8-flash-tts', voice='Kore')
     slideshow = video.transition(
         video.transition(slow_zoom(photo_1, True), slow_zoom(photo_2, False), effect='fade', duration=0.6),
         slow_zoom(photo_3, True),
@@ -129,15 +114,17 @@ class Listings(TableModel, name='listings'):
 
     __indexes__ = [
         # Search the listings by photo, or by words that describe one.
-        pxt.EmbeddingIndex(photo_1, embedding=huggingface.clip.using(model_id='openai/clip-vit-base-patch32')),
+        pxt.EmbeddingIndex(photo_1, embedding=gemini.embed_content.using(model='gemini-embedding-2')),
         # Search the listings by what the model wrote about them.
-        pxt.EmbeddingIndex(description, embedding=openai.embeddings.using(model='text-embedding-3-small')),
+        pxt.EmbeddingIndex(description, embedding=gemini.embed_content.using(model='gemini-embedding-2')),
     ]
 
 
 @pxt.query
 def search(q: str, limit: int = 5):
-    score = Listings.description.similarity(string=q)
+    # Search the photos, not the description: a photo shows what a description leaves out, like
+    # the color of a lamp's light (scripts/search_test.py: 17 of 17 searches, against 10 of 17).
+    score = Listings.photo_1.similarity(string=q)
     return (
         Listings.order_by(score, asc=False)
         .limit(limit)

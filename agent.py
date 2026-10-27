@@ -26,7 +26,7 @@ class Picks(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5.4-mini',
+    'google-gla:gemini-3.8-flash',
     output_type=Picks,
     instructions=(
         'You help buyers on a secondhand marketplace. Search the listings, and recommend only '
