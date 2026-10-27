@@ -29,7 +29,26 @@ When a seller posts three photos and a price, Pixeltable:
 - makes an 11-second video from the photos, narrated by Gemini
 - indexes the first photo for `/search`, so shoppers can find the listing by describing the item in words
 
-Shoppers can also ask a question, like "something warm to read by, under $150", and get matching listings back from `POST /ask`. `agent.py` answers the same questions as `POST /ask`, with Pydantic AI.
+Here is the first of those steps in `app.py`, on a Pixeltable table class. A column with a type stores what the seller sends. A column set to a Pixeltable call, like `gemini.generate_content`, runs that call on every new row:
+
+```python
+class Listings(TableModel, name='listings'):
+    id = pxt.Column(value=uuid7(), primary_key=True)
+    seller: pxt.String
+    price: pxt.Float
+    photo_1: pxt.Image
+    photo_2: pxt.Image
+    photo_3: pxt.Image
+
+    # Gemini writes the listing from the photos; parse_details() turns Gemini's JSON into a ListingDetails.
+    response = gemini.generate_content(
+        [PROMPT, photo_1, photo_2, photo_3], model='gemini-3.8-flash', config=LISTING_CONFIG
+    )
+    details = parse_details(response.candidates[0].content.parts[0].text.astype(pxt.String))
+    ...
+```
+
+Shoppers can also ask a question, like "something warm to read by, under $150", and get matching listings back from `POST /ask`. Gemini calls the app's `find_listings` query as a tool, Pixeltable runs the query, and Gemini picks from the results. If your agents already run on Pydantic AI, `agent.py` does the same job as a Pydantic AI agent that reads the same listings table and returns the same `Picks` model.
 
 ## Run the app
 
@@ -75,7 +94,7 @@ python agent.py "Something warm to read by, under \$150?"   # the same question,
 
 ## Files
 
-- `app.py`: the whole app, including the Pydantic models, the tables, and the routes
-- `agent.py`: a Pydantic AI agent that reads the listings table through Pixeltable's add-on for Pydantic AI Harness. The add-on isn't released yet, so `pyproject.toml` installs the add-on from the branch of [pydantic/pydantic-ai#9369](https://github.com/pydantic/pydantic-ai/pull/9369).
+- `app.py`: the app: the Pydantic models, the Pixeltable tables (`Listings` for listings, `Asks` for shoppers' questions), and the FastAPI routes, which Pixeltable's `FastAPIRouter` builds from the tables and queries. `pxt schema update` creates the tables from this file, and `pxt service update` serves the routes.
+- `agent.py`: the Pydantic AI version of `POST /ask`. The agent searches and queries the listings table with tools from Pixeltable's add-on for Pydantic AI Harness, a package of add-ons for Pydantic AI agents. The add-on isn't released yet, so `pyproject.toml` installs the add-on from the branch of [pydantic/pydantic-ai#9369](https://github.com/pydantic/pydantic-ai/pull/9369).
 - `scripts/seed.py`: posts the sample listings
-- `scripts/search_test.py`: 17 searches with a known right answer. `/search` puts the right listing first in all 17
+- `scripts/search_test.py`: runs 17 searches, each with a known right listing. `/search` ranks that listing first in all 17.

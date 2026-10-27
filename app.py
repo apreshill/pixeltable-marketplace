@@ -105,7 +105,7 @@ class Listings(TableModel, name='listings'):
     photo_2: pxt.Image
     photo_3: pxt.Image
 
-    # A model writes the listing from the photos, into the app's own Pydantic model.
+    # Gemini writes the listing from the photos; parse_details() turns Gemini's JSON into a ListingDetails.
     response = gemini.generate_content(
         [PROMPT, photo_1, photo_2, photo_3], model='gemini-3.8-flash', config=LISTING_CONFIG
     )
