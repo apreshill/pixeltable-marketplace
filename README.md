@@ -29,11 +29,11 @@ When a seller posts three photos and a price, Pixeltable:
 - makes an 11-second video from the photos, narrated by Gemini
 - indexes the first photo for `/search`, so shoppers can find the listing by describing the item in words
 
-Here is the first of those steps in `app.py`, on a Pixeltable table class. A column with a type stores what the seller sends. A column set to a Pixeltable call, like `gemini.generate_content`, runs that call on every new row:
+Here is the first of those steps in `app.py`, on a Pixeltable table class. A column with a type stores what the seller sends. A column set to a Pixeltable call, like `pxtf.gemini.generate_content`, runs that call on every new row:
 
 ```python
 class Listings(TableModel, name='listings'):
-    id = pxt.Column(value=uuid7(), primary_key=True)
+    id = pxt.Column(value=pxtf.uuid.uuid7(), primary_key=True)
     seller: pxt.String
     price: pxt.Float
     photo_1: pxt.Image
@@ -41,7 +41,7 @@ class Listings(TableModel, name='listings'):
     photo_3: pxt.Image
 
     # Gemini writes the listing from the photos; parse_details() turns Gemini's JSON into a ListingDetails.
-    response = gemini.generate_content(
+    response = pxtf.gemini.generate_content(
         [PROMPT, photo_1, photo_2, photo_3], model='gemini-3.8-flash', config=LISTING_CONFIG
     )
     details = parse_details(response.candidates[0].content.parts[0].text.astype(pxt.String))
@@ -117,7 +117,7 @@ The finished job's `result` is your listing:
 pxt get market/listings <id> --cols title,price,narration,promo
 ```
 
-The row also has the narration audio, which the API didn't return. `narration` and `promo` are file paths you can open.
+`app.py` sets the `/listings` route to return four columns. The row in Pixeltable has every column, including `narration`, the audio of Gemini reading the pitch. `narration` and `promo` are file paths you can open.
 
 If a listing fails, see why:
 
@@ -133,9 +133,23 @@ python scripts/seed.py <url>
 
 ### 6. Search the photos in words
 
+From the API:
+
 ```bash
 curl "<url>/search?q=warm%20light%20for%20a%20reading%20nook&limit=3"
 ```
+
+From Python, with the Pixeltable SDK, in a Python shell:
+
+```python
+from app import Listings, TableModel
+
+TableModel.bind_all('market')
+score = Listings.photo_1.similarity(string='warm light for a reading nook')
+Listings.order_by(score, asc=False).limit(3).select(Listings.title, Listings.price, score=score).collect()
+```
+
+The `/search` route serves `search`, a query function in `app.py`. The Python code runs the same query directly.
 
 ### 7. Ask a question
 

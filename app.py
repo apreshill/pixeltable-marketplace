@@ -21,8 +21,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 import pixeltable as pxt
-from pixeltable.functions import gemini, json, video
-from pixeltable.functions.uuid import to_string, uuid7
+import pixeltable.functions as pxtf
 from pixeltable.serving import FastAPIRouter
 
 
@@ -94,11 +93,11 @@ def caption(title: str, price: float) -> str:
 
 def slow_zoom(photo: pxt.exprs.Expr, zoom_in: bool) -> pxt.exprs.Expr:
     start, end = (1.0, 1.12) if zoom_in else (1.12, 1.0)
-    return video.zoom(still(photo), start_scale=start, end_scale=end)
+    return pxtf.video.zoom(still(photo), start_scale=start, end_scale=end)
 
 
 class Listings(TableModel, name='listings'):
-    id = pxt.Column(value=uuid7(), primary_key=True)
+    id = pxt.Column(value=pxtf.uuid.uuid7(), primary_key=True)
     seller: pxt.String
     price: pxt.Float
     photo_1: pxt.Image
@@ -106,7 +105,7 @@ class Listings(TableModel, name='listings'):
     photo_3: pxt.Image
 
     # Gemini writes the listing from the photos; parse_details() turns Gemini's JSON into a ListingDetails.
-    response = gemini.generate_content(
+    response = pxtf.gemini.generate_content(
         [PROMPT, photo_1, photo_2, photo_3], model='gemini-3.8-flash', config=LISTING_CONFIG
     )
     details = parse_details(response.candidates[0].content.parts[0].text.astype(pxt.String))
@@ -114,15 +113,15 @@ class Listings(TableModel, name='listings'):
     description = details.description.astype(pxt.String)
 
     # The photos become a narrated listing video.
-    narration = gemini.generate_speech(details.pitch.astype(pxt.String), model='gemini-3.8-flash-tts', voice='Kore')
-    slideshow = video.transition(
-        video.transition(slow_zoom(photo_1, True), slow_zoom(photo_2, False), effect='fade', duration=0.6),
+    narration = pxtf.gemini.generate_speech(details.pitch.astype(pxt.String), model='gemini-3.8-flash-tts', voice='Kore')
+    slideshow = pxtf.video.transition(
+        pxtf.video.transition(slow_zoom(photo_1, True), slow_zoom(photo_2, False), effect='fade', duration=0.6),
         slow_zoom(photo_3, True),
         effect='fade',
         duration=0.6,
     )
-    promo = video.with_audio(
-        video.overlay_text(
+    promo = pxtf.video.with_audio(
+        pxtf.video.overlay_text(
             slideshow, caption(title, price), font_size=30, color='white', horizontal_align='center',
             box=True, box_color='black', box_opacity=0.6, vertical_align='bottom', vertical_margin=36,
         ),
@@ -131,9 +130,9 @@ class Listings(TableModel, name='listings'):
 
     __indexes__ = [
         # Search the listings by photo, or by words that describe one.
-        pxt.EmbeddingIndex(photo_1, embedding=gemini.embed_content.using(model='gemini-embedding-2')),
+        pxt.EmbeddingIndex(photo_1, embedding=pxtf.gemini.embed_content.using(model='gemini-embedding-2')),
         # Search the listings by what the model wrote about them.
-        pxt.EmbeddingIndex(description, embedding=gemini.embed_content.using(model='gemini-embedding-2')),
+        pxt.EmbeddingIndex(description, embedding=pxtf.gemini.embed_content.using(model='gemini-embedding-2')),
     ]
 
 
@@ -172,7 +171,7 @@ def find_listings(looking_for: str, max_price: float):
         Listings.where(Listings.price <= max_price)
         .order_by(score, asc=False)
         .limit(5)
-        .select(listing_id=to_string(Listings.id), title=Listings.title, price=Listings.price,
+        .select(listing_id=pxtf.uuid.to_string(Listings.id), title=Listings.title, price=Listings.price,
                 description=Listings.description, score=score)
     )
 
@@ -194,17 +193,17 @@ def parse_picks(raw: str) -> pxt.Json[Picks]:
 class Asks(TableModel, name='asks'):
     """The buyer's agent: each question is a row, and every step of the answer is a column."""
 
-    id = pxt.Column(value=uuid7(), primary_key=True)
+    id = pxt.Column(value=pxtf.uuid.uuid7(), primary_key=True)
     question: pxt.String
 
     # Gemini decides how to call the app's own query, and Pixeltable runs the call.
-    tool_call = gemini.generate_content(
+    tool_call = pxtf.gemini.generate_content(
         question, model='gemini-3.8-flash', tools=TOOLS, config={'system_instruction': ASK_INSTRUCTIONS}
     )
-    found = gemini.invoke_tools(TOOLS, tool_call)
+    found = pxtf.gemini.invoke_tools(TOOLS, tool_call)
     # Gemini picks from what the query found, into the app's own Pydantic model.
-    answer = gemini.generate_content(
-        question + PICK_INSTRUCTIONS + json.dumps(found), model='gemini-3.8-flash', config=PICKS_CONFIG
+    answer = pxtf.gemini.generate_content(
+        question + PICK_INSTRUCTIONS + pxtf.json.dumps(found), model='gemini-3.8-flash', config=PICKS_CONFIG
     )
     picks = parse_picks(answer.candidates[0].content.parts[0].text.astype(pxt.String))
 
