@@ -216,10 +216,14 @@ router.add_insert_route(
     inputs=[Listings.seller, Listings.price],
     uploadfile_inputs=[Listings.photo_1, Listings.photo_2, Listings.photo_3],
     outputs=[Listings.id, Listings.title, Listings.details, Listings.promo],
+    # Gemini and the video take about 15 seconds, so the POST returns a job to poll.
+    background=True,
 )
 router.add_query_route(path='/search', query=search, method='get')
 router.add_query_route(path='/similar', query=similar, uploadfile_inputs=['photo'])
-router.add_insert_route(Asks, path='/ask', inputs=[Asks.question], outputs=[Asks.id, Asks.found, Asks.picks])
+router.add_insert_route(
+    Asks, path='/ask', inputs=[Asks.question], outputs=[Asks.id, Asks.found, Asks.picks], background=True
+)
 
 
 api = FastAPI(title='Marketplace')
