@@ -56,9 +56,18 @@ def seed(base_url: str, only: set[str] | None = None) -> None:
             }
             resp = client.post('/listings', data={'seller': seller, 'price': price}, files=files)
             jobs[slug] = resp.raise_for_status().json()['job_url']
+        failed = []
         for slug, job_url in jobs.items():
-            listing = wait_for(client, job_url)
+            try:
+                listing = wait_for(client, job_url)
+            except RuntimeError as e:
+                # e.g. Gemini answers 503 when a model is overloaded; the rest of the listings still go in
+                print(f'{slug}: FAILED: {str(e)[:200]}')
+                failed.append(slug)
+                continue
             print(f"{slug}: {listing['title']} | {listing['details']['description']}")
+        if failed:
+            print(f"\n{len(failed)} listing(s) failed. To retry just those: python scripts/seed.py {base_url} {' '.join(failed)}")
 
 
 if __name__ == '__main__':

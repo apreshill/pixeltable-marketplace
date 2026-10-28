@@ -63,7 +63,7 @@ pxt skills install
 Then paste this prompt into your agent:
 
 ```text
-Run this app locally by following the "Run the app" steps in README.md. GEMINI_API_KEY is already set. Post one listing from samples/, poll its job_url until status is done, then show me the stored row with pxt get market/listings <id> --cols title,price,narration,promo, using the id from the job's result. Then walk me through the Listings class in app.py: for each column, say what the column stores or computes, and which other columns that column reads. Use the pxt CLI to look at the tables. Don't change app.py.
+First check that GEMINI_API_KEY is set, and if it isn't, stop and tell me. Then run this app locally by following steps 1 to 3 of "Run the app" in README.md, which post the guitar listing and wait for its job to finish. Then show me the stored row with `pxt get market/listings <listing_id> --cols title,price,narration,promo`. Use the id in the finished job's result as <listing_id>, not the id the POST returned. Then walk me through the Listings class in app.py. For each column, say what the column stores or computes, and which other columns it reads, using pxt commands to look at the tables. Don't change app.py.
 ```
 
 ## Run the app
@@ -99,7 +99,7 @@ curl -X POST <url>/listings -F seller=you -F price=260 \
   -F photo_1=@samples/guitar-1.jpg -F photo_2=@samples/guitar-2.jpg -F photo_3=@samples/guitar-3.jpg
 ```
 
-The app returns a `job_url` right away, because Gemini and the video take about 15 seconds. Check the job until `status` is `done`:
+The POST starts a background job and returns the job's `id` and a `job_url` right away, because the Gemini calls and the video take about 15 seconds. The job's `id` isn't your listing's `id`. Put the `job_url` in the command below, and run the command until `status` is `done`:
 
 ```bash
 curl <job_url>
@@ -107,14 +107,16 @@ curl <job_url>
 
 The finished job's `result` is your listing:
 
+- `id`: the listing's ID, for step 4
 - `details`: what Gemini wrote from the photos, as the Pydantic model `ListingDetails`
 - `promo`: the video. Open the link in a browser.
-- `id`: the listing's ID, for step 4
 
 ### 4. See the stored row
 
+Use the `id` from the finished job's `result` as `<listing_id>`:
+
 ```bash
-pxt get market/listings <id> --cols title,price,narration,promo
+pxt get market/listings <listing_id> --cols title,price,narration,promo
 ```
 
 `app.py` sets the `/listings` route to return four columns. The row in Pixeltable has every column, including `narration`, the audio of Gemini reading the pitch. `narration` and `promo` are file paths you can open.
@@ -158,7 +160,10 @@ curl -X POST <url>/ask -H 'content-type: application/json' \
   -d '{"question": "Something warm to read by, under $150?"}'
 ```
 
-The `/ask` request returns a `job_url` too. The answer is in the finished job's `result`.
+The `/ask` response has its own `job_url`. Run `curl` on that `job_url` until `status` is `done`. The finished job's `result` has two parts:
+
+- `picks`: Gemini's answer. `picks.picks` lists the listings Gemini chose, each with a `why`. `picks.note` sums up the answer.
+- `found`: the listings the `find_listings` query returned, which Gemini chose from
 
 Ask the same question through the Pydantic AI agent:
 

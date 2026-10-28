@@ -131,8 +131,6 @@ class Listings(TableModel, name='listings'):
     __indexes__ = [
         # Search the listings by photo, or by words that describe one.
         pxt.EmbeddingIndex(photo_1, embedding=pxtf.gemini.embed_content.using(model='gemini-embedding-2')),
-        # Search the listings by what the model wrote about them.
-        pxt.EmbeddingIndex(description, embedding=pxtf.gemini.embed_content.using(model='gemini-embedding-2')),
     ]
 
 
