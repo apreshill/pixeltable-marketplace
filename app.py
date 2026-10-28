@@ -157,20 +157,22 @@ def similar(photo: pxt.Image, limit: int = 5):
 
 
 @pxt.query
-def find_listings(looking_for: str, max_price: float):
-    """Find listings whose photos match what the buyer is looking for, at or under max_price.
+def find_listings(looking_for: str, max_price: float, condition: str):
+    """Find listings whose photos match what the buyer is looking for, at or under max_price, in the condition asked for.
 
     Args:
-        looking_for: What the buyer wants, in their words, without the price.
+        looking_for: What the buyer wants, in their words, without the price or condition.
         max_price: The most the buyer will pay, in dollars. When they don't say, use 100000.
+        condition: One of 'new', 'like new', 'good', 'fair'. When they don't say, use 'any'.
     """
     score = Listings.photo_1.similarity(string=looking_for)
+    # Gemini wrote each listing's condition, and ListingDetails allows only four values, so this filter misses nothing.
     return (
-        Listings.where(Listings.price <= max_price)
+        Listings.where((Listings.price <= max_price) & ((condition == 'any') | (Listings.details.condition == condition)))
         .order_by(score, asc=False)
         .limit(5)
         .select(listing_id=pxtf.uuid.to_string(Listings.id), title=Listings.title, price=Listings.price,
-                description=Listings.description, score=score)
+                condition=Listings.details.condition, description=Listings.description, score=score)
     )
 
 

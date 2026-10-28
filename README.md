@@ -2,11 +2,13 @@
 
 A secondhand marketplace built with FastAPI and Pydantic, with [Pixeltable](https://github.com/pixeltable/pixeltable) as its database.
 
-If you use Pydantic, you define a model once and use that model everywhere. Pixeltable can use a Pydantic model as a column type. In this app, one Pydantic model, `ListingDetails`, is:
+You already know type safety from Pydantic. Pixeltable extends it to the images, video and LLM output you store, and guarantees that every row is computed the same way. This app shows it in three places:
 
-- the JSON Gemini must return for each listing
-- the type of the `details` column
-- part of the `Listing` that `GET /listings/{id}` returns
+- **Every row.** Your Pydantic model defines the shape of your data. Pixeltable calls your functions, including LLMs, on every row, the same way, and stores each result in that shape. Here, Gemini writes every listing from the seller's photos, in the shape of the Pydantic model `ListingDetails`.
+- **Coming in.** Pixeltable checks every image, video, audio file and document at insert, and can validate outputs, including from LLMs, against your Pydantic model. So a bad file or a bad LLM output can't break your app. Here, an upload that isn't an image is refused before Gemini sees it, and Gemini's JSON is validated against `ListingDetails`.
+- **Going out.** Pixeltable returns data as your Pydantic models, in query results and in your API's responses, so your editor, your type checker and FastAPI can use it directly. Here, `GET /listings/{id}` returns a `Listing`, and the `/listings` route types `details` as `ListingDetails`.
+
+Every listing's `details` has the same fields, so the app can query what Gemini wrote like any other data. A shopper can send "a like-new lamp under $100" to `POST /ask`, and the app filters on the condition Gemini wrote, the same way it filters on the price the seller set.
 
 ```
 Without Pixeltable                         With Pixeltable
@@ -22,16 +24,18 @@ FastAPI + Pydantic                         FastAPI + Pydantic
         copies new rows into the vector database
 ```
 
-When a seller posts three photos and a price, Pixeltable:
+Here is the `Listings` table in `app.py`:
 
-- stops any upload that isn't an image before Gemini or the video step sees the upload
-- has Gemini write the listing from the photos
-- makes an 11-second video from the photos, narrated by Gemini
-- indexes the first photo for `/search`, so shoppers can find the listing by describing the item in words
-
-Here is the first of those steps in `app.py`, on a Pixeltable table class. A column with a type stores what the seller sends. A column set to a Pixeltable call, like `pxtf.gemini.generate_content`, runs that call on every new row:
+- The photo columns have Pixeltable's `Image` type, so Pixeltable opens each upload and refuses one that isn't an image.
+- When a column is set to a Pixeltable call, like `pxtf.gemini.generate_content`, Pixeltable runs that call on every new row.
+- `parse_details()` validates Gemini's JSON against `ListingDetails`, and its return type makes `ListingDetails` the type of the `details` column.
 
 ```python
+@pxt.udf
+def parse_details(raw: str) -> pxt.Json[ListingDetails]:
+    return ListingDetails.model_validate_json(raw).model_dump()
+
+
 class Listings(TableModel, name='listings'):
     id = pxt.Column(value=pxtf.uuid.uuid7(), primary_key=True)
     seller: pxt.String
@@ -48,7 +52,12 @@ class Listings(TableModel, name='listings'):
     ...
 ```
 
-Shoppers can also ask a question, like "something warm to read by, under $150", and get matching listings back from `POST /ask`. Gemini calls the app's `find_listings` query as a tool, Pixeltable runs the query, and Gemini picks from the results. If your agents already run on Pydantic AI, `agent.py` does the same job as a Pydantic AI agent that reads the same listings table and returns the same `Picks` model.
+The app also does these things, each from a column or query in the same file, with no worker or sync script:
+
+- Each listing gets an 11-second video made from its photos and narrated by Gemini.
+- `/search` finds listings by their first photo from a description in words.
+- `POST /ask` answers shoppers' questions. Gemini calls the app's `find_listings` query as a tool, Pixeltable runs the query, and Gemini picks from the results.
+- `agent.py` does the same job as `POST /ask`, as a Pydantic AI agent. It reads the same listings table and returns the same `Picks` model, the list of listings chosen for the shopper.
 
 ## Run the app
 
@@ -93,11 +102,21 @@ curl <job_url>
 
 The finished job's `result` is your listing:
 
-- `id`: the listing's ID, for step 4
+- `id`: the listing's ID, for step 5
 - `details`: what Gemini wrote from the photos, as the Pydantic model `ListingDetails`
 - `promo`: the video. Open the link in a browser.
 
-### 4. See the stored row
+### 4. Post a file that isn't an image
+
+```bash
+echo "not an image" > not-a-photo.jpg
+curl -X POST <url>/listings -F seller=you -F price=10 \
+  -F photo_1=@not-a-photo.jpg -F photo_2=@samples/guitar-2.jpg -F photo_3=@samples/guitar-3.jpg
+```
+
+Run `curl` on the new `job_url`. The job fails with `INVALID_DATA_FORMAT` and `Not a valid image`. Pixeltable refuses the whole insert, so no listing is stored, and Gemini never sees the file.
+
+### 5. See the stored row
 
 Use the `id` from the finished job's `result` as `<listing_id>`:
 
@@ -113,13 +132,28 @@ If a listing fails, see why:
 pxt errors market/listings
 ```
 
-### 5. Post the 19 sample listings
+### 6. Post the 19 sample listings
 
 ```bash
 python scripts/seed.py <url>
 ```
 
-### 6. Search the photos in words
+### 7. Query what Gemini wrote
+
+If Gemini wrote free text, one listing might say "like-new" and another "barely used", and a filter would miss one of them. Every stored `details` fits `ListingDetails`, where `condition` can only be `new`, `like new`, `good` or `fair`. Because Gemini can't write any other value, one filter finds every like-new listing.
+
+Start a Python shell in this folder. `bind_all('market')` connects the table classes in `app.py` to the `market` tables you created in step 2:
+
+```python
+from app import Listings, TableModel
+
+TableModel.bind_all('market')
+Listings.where(Listings.details.condition == 'like new').select(Listings.title, Listings.price).collect()
+```
+
+With the 19 sample listings, the query returns four listings, e.g. `Black Adjustable LED Desk Lamp` at 45.0.
+
+### 8. Search the photos in words
 
 From the API:
 
@@ -127,31 +161,28 @@ From the API:
 curl "<url>/search?q=warm%20light%20for%20a%20reading%20nook&limit=3"
 ```
 
-From Python, with the Pixeltable SDK, in a Python shell:
+From the same Python shell:
 
 ```python
-from app import Listings, TableModel
-
-TableModel.bind_all('market')
 score = Listings.photo_1.similarity(string='warm light for a reading nook')
 Listings.order_by(score, asc=False).limit(3).select(Listings.title, Listings.price, score=score).collect()
 ```
 
 The `/search` route serves `search`, a query function in `app.py`. The Python code runs the same query directly.
 
-### 7. Ask a question
+### 9. Ask a question
 
 ```bash
 curl -X POST <url>/ask -H 'content-type: application/json' \
-  -d '{"question": "Something warm to read by, under $150?"}'
+  -d '{"question": "A like-new lamp under $100?"}'
 ```
 
 The `/ask` response has its own `job_url`. Run `curl` on that `job_url` until `status` is `done`. The finished job's `result` has two parts:
 
-- `picks`: Gemini's answer. `picks.picks` lists the listings Gemini chose, each with a `why`. `picks.note` sums up the answer.
-- `found`: the listings the `find_listings` query returned, which Gemini chose from
+- `picks`: Gemini's answer, as a `Picks` model. Its `picks` field lists the listings Gemini chose, each with a `why`, and its `note` field sums up the answer.
+- `found`: the listings the `find_listings` query returned, which Gemini chose from. When we asked this question, Gemini called `find_listings` with `condition` set to `like new`, and the query returned only like-new listings.
 
-Ask the same question through the Pydantic AI agent:
+Ask a question through the Pydantic AI agent:
 
 ```bash
 python agent.py "Something warm to read by, under \$150?"
