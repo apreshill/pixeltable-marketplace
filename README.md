@@ -50,22 +50,6 @@ class Listings(TableModel, name='listings'):
 
 Shoppers can also ask a question, like "something warm to read by, under $150", and get matching listings back from `POST /ask`. Gemini calls the app's `find_listings` query as a tool, Pixeltable runs the query, and Gemini picks from the results. If your agents already run on Pydantic AI, `agent.py` does the same job as a Pydantic AI agent that reads the same listings table and returns the same `Picks` model.
 
-## Explore it with your coding agent
-
-To have a coding agent such as Claude Code, Cursor, or Codex run the app for you, first install the Pixeltable skill in this folder, so the agent knows the `pxt` commands:
-
-```bash
-uv sync
-source .venv/bin/activate
-pxt skills install
-```
-
-Then paste this prompt into your agent:
-
-```text
-First check that GEMINI_API_KEY is set, and if it isn't, stop and tell me. Then run this app locally by following steps 1 to 3 of "Run the app" in README.md, which post the guitar listing and wait for its job to finish. Then show me the stored row with `pxt get market/listings <listing_id> --cols title,price,narration,promo`. Use the id in the finished job's result as <listing_id>, not the id the POST returned. Then walk me through the Listings class in app.py. For each column, say what the column stores or computes, and which other columns it reads, using pxt commands to look at the tables. Don't change app.py.
-```
-
 ## Run the app
 
 You need:
@@ -81,6 +65,8 @@ You need:
 uv sync
 source .venv/bin/activate
 ```
+
+If you use a coding agent, run `pxt skills install`. It adds the Pixeltable skill, which covers the `pxt` commands, to this folder for your agent to read.
 
 ### 2. Create the tables and start the app
 
