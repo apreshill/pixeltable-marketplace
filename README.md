@@ -188,6 +188,38 @@ Ask a question through the Pydantic AI agent:
 python agent.py "Something warm to read by, under \$150?"
 ```
 
+### 10. See every step in Logfire
+
+Create a project in [Logfire](https://logfire.pydantic.dev), and make a write token for it. Then set these in the shell where you run `pxt`:
+
+```bash
+export LOGFIRE_TOKEN=<your write token>
+export OTEL_EXPORTER_OTLP_ENDPOINT=https://logfire-us.pydantic.dev
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=$LOGFIRE_TOKEN"
+export OTEL_SERVICE_NAME=marketplace
+export OTEL_SPAN_LEVEL=debug
+```
+
+If your Logfire project is in the EU, use `https://logfire-eu.pydantic.dev` instead.
+
+The Pixeltable daemon reads the environment only when it starts, so restart it. Then restart the app with `--otel`:
+
+```bash
+pxt daemon restart
+pxt service update app.py market -f --otel
+```
+
+Post a listing as in step 3. In Logfire, the listing is a `pixeltable.insert` trace, with a span for each call Pixeltable made to fill the row's columns. Each span names its column. In one run, Gemini took 12.7 seconds to write `response`, 4.3 seconds to read the pitch into `narration`, and 1.6 seconds to embed the first photo for search. The `POST /listings` request is a separate trace, because the route returns a job before the insert runs.
+
+`agent.py` sends its own traces to Logfire when `LOGFIRE_TOKEN` is set. Each Pixeltable query the agent runs shows up under the tool call that ran it.
+
+To let a coding agent such as Claude Code read these traces, add the [Logfire MCP server](https://pydantic.dev/docs/logfire/guides/mcp-server/):
+
+```bash
+claude mcp add --transport http logfire https://logfire-us.pydantic.dev/mcp
+claude mcp login logfire
+```
+
 ## Files
 
 - `app.py`: the app: the Pydantic models, the Pixeltable tables (`Listings` for listings, `Asks` for shoppers' questions), and the FastAPI routes, which Pixeltable's `FastAPIRouter` builds from the tables and queries. `pxt schema update` creates the tables from this file, and `pxt service update` serves the routes.

@@ -9,15 +9,18 @@ Pydantic AI Harness, and returns the same `Picks` model.
 import sys
 
 import logfire
+from opentelemetry.instrumentation.pixeltable import PixeltableInstrumentor
 from pydantic_ai import Agent, ModelRetry
 from pydantic_ai_harness import Pixeltable
 
 from app import Listings, Picks, TableModel
 
-TableModel.bind_all('market')
-
+# Before the first Pixeltable operation, so the queries the agent runs show up under its tool calls in Logfire.
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
+PixeltableInstrumentor().instrument(span_level='debug')
+
+TableModel.bind_all('market')
 
 agent = Agent(
     'google:gemini-3.8-flash',
