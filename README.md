@@ -1,6 +1,16 @@
 # pixeltable-marketplace
 
-A secondhand marketplace built with FastAPI and Pydantic, with [Pixeltable](https://github.com/pixeltable/pixeltable) as its database.
+A secondhand marketplace app. Sellers post photos, and Gemini writes the listing. Shoppers search the listings or ask for what they want.
+
+| To | Send | Get back |
+|---|---|---|
+| Post a listing: `POST /listings` | seller name, price, three photos | the listing Gemini wrote from the photos (title, category, condition, color, description), the first photo cropped to the item, and an 11-second video ad: the three photos with a slow zoom, the title and price as a caption, and Gemini's voice reading a two-sentence pitch |
+| See a listing: `GET /listings/{id}` | listing ID | seller, price, title and Gemini's listing |
+| Search in words: `GET /search` | a description, e.g. "warm light for a reading nook" | the closest listings, by their first photo |
+| Search with a photo: `POST /similar` | a photo | the closest listings, by their first photo |
+| Ask: `POST /ask`, or `python agent.py` | a question, e.g. "a like-new lamp under $100?" | the listings that fit, each with a reason, and a note to the shopper |
+
+The app is built with FastAPI and Pydantic, with [Pixeltable](https://github.com/pixeltable/pixeltable) as its database.
 
 You already know type safety from Pydantic. Pixeltable extends it to the images, video and LLM output you store, and guarantees that everything derived from them is made the same way for every file. This app shows it in three places:
 

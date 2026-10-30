@@ -36,6 +36,15 @@ class ListingDetails(BaseModel):
     pitch: str = Field(description='Narration for a 10-second listing video: two short spoken sentences, 15 to 25 words')
 
 
+class Box(BaseModel):
+    """Where the item is in a photo, on a 0 to 1000 scale."""
+
+    ymin: int = Field(ge=0, le=1000)
+    xmin: int = Field(ge=0, le=1000)
+    ymax: int = Field(ge=0, le=1000)
+    xmax: int = Field(ge=0, le=1000)
+
+
 class Listing(BaseModel):
     """A listing as the storefront shows it."""
 
@@ -64,6 +73,12 @@ TableModel = pxt.model_base()
 
 LISTING_CONFIG = {'response_mime_type': 'application/json', 'response_json_schema': ListingDetails.model_json_schema()}
 PROMPT = 'Write a marketplace listing for the item in these photos. Describe only what the photos show.'
+BOX_CONFIG = {'response_mime_type': 'application/json', 'response_json_schema': Box.model_json_schema()}
+# An empty box can't be cropped, so a hidden item gets the whole photo instead.
+BOX_PROMPT = (
+    'Return the bounding box of this item in the photo. If the item is not visible, or most of it is hidden, '
+    'return the whole photo: ymin 0, xmin 0, ymax 1000, xmax 1000. Item:'
+)
 
 
 @pxt.udf
@@ -96,6 +111,19 @@ def slow_zoom(photo: pxt.exprs.Expr, zoom_in: bool) -> pxt.exprs.Expr:
     return pxtf.video.zoom(still(photo), start_scale=start, end_scale=end)
 
 
+def crop_to_box(photo: pxt.exprs.Expr, box: pxt.exprs.Expr) -> pxt.exprs.Expr:
+    # PIL crops an empty box to a 0x0 image, which fails the whole insert when it's stored,
+    # so each far edge stays at least 1 pixel past its near edge.
+    def px(value: pxt.exprs.Expr, size: pxt.exprs.Expr) -> pxt.exprs.Expr:
+        return (value.astype(pxt.Int) * size) // 1000
+
+    left = pxtf.math.to_int(pxtf.json.min([px(box.xmin, photo.width), photo.width - 1]))
+    top = pxtf.math.to_int(pxtf.json.min([px(box.ymin, photo.height), photo.height - 1]))
+    right = pxtf.math.to_int(pxtf.json.max([px(box.xmax, photo.width), left + 1]))
+    bottom = pxtf.math.to_int(pxtf.json.max([px(box.ymax, photo.height), top + 1]))
+    return photo.crop([left, top, right, bottom])
+
+
 class Listings(TableModel, name='listings'):
     id = pxt.Column(value=pxtf.uuid.uuid7(), primary_key=True)
     seller: pxt.String
@@ -111,6 +139,11 @@ class Listings(TableModel, name='listings'):
     details = parse_details(response.candidates[0].content.parts[0].text.astype(pxt.String))
     title = details.title.astype(pxt.String)
     description = details.description.astype(pxt.String)
+
+    # Gemini finds the item it named in the first photo, and the photo is cropped to it.
+    box_response = pxtf.gemini.generate_content([BOX_PROMPT, title, photo_1], model='gemini-3.8-flash', config=BOX_CONFIG)
+    box = box_response.parsed.astype(pxt.Json[Box])
+    cropped_photo = crop_to_box(photo_1, box)
 
     # The photos become a narrated listing video.
     narration = pxtf.gemini.generate_speech(details.pitch.astype(pxt.String), model='gemini-3.8-flash-tts', voice='Kore')
@@ -214,7 +247,7 @@ router.add_insert_route(
     path='/listings',
     inputs=[Listings.seller, Listings.price],
     uploadfile_inputs=[Listings.photo_1, Listings.photo_2, Listings.photo_3],
-    outputs=[Listings.id, Listings.title, Listings.details, Listings.promo],
+    outputs=[Listings.id, Listings.title, Listings.details, Listings.cropped_photo, Listings.promo],
     # Gemini and the video take about 15 seconds, so the POST returns a job to poll.
     background=True,
 )
