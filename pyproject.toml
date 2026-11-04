@@ -8,16 +8,14 @@ dependencies = [
     "fastapi>=0.162.0",
     "google-genai>=2.33.0",
     "logfire>=5.4.0",
-    "pixeltable[serve,otel]==0.7.19",
-    "pydantic-ai-harness[pixeltable]",
-    "pydantic-ai-slim[google]",
+    "pixeltable[serve,otel]==0.7.22",
+    "pydantic-ai-harness[pixeltable]>=0.66.0",
+    "pydantic-ai-slim[google]>=2.66.0",
 ]
 
 [[tool.pixeltable.database]]
 
 [tool.uv.sources]
-pydantic-ai-slim = { git = "https://github.com/pierrebrunelle/pydantic-ai", subdirectory = "pydantic_ai_slim", rev = "codex/pixeltable-harness-port" }
-pydantic-ai-harness = { git = "https://github.com/pierrebrunelle/pydantic-ai", subdirectory = "src/pydantic_ai_harness", rev = "codex/pixeltable-harness-port" }
 # The local database. vars supply the values of the config vars a schema declares; a hosted
 # database is a second entry, named by its uri.
 # vars.media_dest = 's3://bucket/prefix'
