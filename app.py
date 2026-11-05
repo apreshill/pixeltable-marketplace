@@ -117,10 +117,19 @@ def crop_to_box(photo: pxt.exprs.Expr, box: pxt.exprs.Expr) -> pxt.exprs.Expr:
     def px(value: pxt.exprs.Expr, size: pxt.exprs.Expr) -> pxt.exprs.Expr:
         return (value.astype(pxt.Int) * size) // 1000
 
-    left = pxtf.math.to_int(pxtf.json.min([px(box.xmin, photo.width), photo.width - 1]))
-    top = pxtf.math.to_int(pxtf.json.min([px(box.ymin, photo.height), photo.height - 1]))
-    right = pxtf.math.to_int(pxtf.json.max([px(box.xmax, photo.width), left + 1]))
-    bottom = pxtf.math.to_int(pxtf.json.max([px(box.ymax, photo.height), top + 1]))
+    # Each edge moves out by 8% of the box's size, within the photo, so the item keeps some room around it.
+    x0, y0 = box.xmin.astype(pxt.Int), box.ymin.astype(pxt.Int)
+    x1, y1 = box.xmax.astype(pxt.Int), box.ymax.astype(pxt.Int)
+    pad_x, pad_y = (x1 - x0) * 8 // 100, (y1 - y0) * 8 // 100
+    xmin = pxtf.math.to_int(pxtf.json.max([x0 - pad_x, 0]))
+    xmax = pxtf.math.to_int(pxtf.json.min([x1 + pad_x, 1000]))
+    ymin = pxtf.math.to_int(pxtf.json.max([y0 - pad_y, 0]))
+    ymax = pxtf.math.to_int(pxtf.json.min([y1 + pad_y, 1000]))
+
+    left = pxtf.math.to_int(pxtf.json.min([px(xmin, photo.width), photo.width - 1]))
+    top = pxtf.math.to_int(pxtf.json.min([px(ymin, photo.height), photo.height - 1]))
+    right = pxtf.math.to_int(pxtf.json.max([px(xmax, photo.width), left + 1]))
+    bottom = pxtf.math.to_int(pxtf.json.max([px(ymax, photo.height), top + 1]))
     return photo.crop([left, top, right, bottom])
 
 
