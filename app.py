@@ -24,15 +24,12 @@ MODEL = 'gemini-3.8-flash'
 TTS_MODEL = 'gemini-3.8-flash-tts'
 EMBEDDING_MODEL = 'gemini-embedding-2'
 
-Condition = Literal['new', 'like new', 'good', 'fair']
-
-
 class ListingDetails(BaseModel):
     """What Gemini writes from a seller's photos."""
 
     title: str = Field(description='A listing title, under 60 characters')
     category: Literal['cameras', 'bikes', 'home', 'bags', 'instruments', 'other']
-    condition: Condition
+    condition: Literal['new', 'like new', 'good', 'fair']
     color: str
     description: str = Field(description='Two or three sentences for buyers, about only what the photos show')
     pitch: str = Field(description='Narration for a 10-second listing video: two short spoken sentences, 15 to 25 words')
