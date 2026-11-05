@@ -1,19 +1,32 @@
-"""The buyer's agent again, built with Pydantic AI: python agent.py "what are you looking for?"
+"""A buyer's agent built with Pydantic AI: python agent.py "what are you looking for?"
 
-app.py has its own buyer's agent (POST /ask), built from Pixeltable alone: the question is a row,
-and Gemini calls the app's query through `pxt.tools`. This file shows the other way: an agent you
-already run in Pydantic AI reads the same listings table through the Pixeltable capability for
-Pydantic AI Harness, and returns the same `Picks` model.
+The agent searches and queries the app's listings table through the Pixeltable capability for
+Pydantic AI Harness, and answers as `Picks`. Its output validator checks each pick against the table.
 """
 
 import sys
+from uuid import UUID
 
 import logfire
 from opentelemetry.instrumentation.pixeltable import PixeltableInstrumentor
+from pydantic import BaseModel, Field
 from pydantic_ai import Agent, ModelRetry
 from pydantic_ai_harness import Pixeltable
 
-from app import Listings, Picks, TableModel
+from app import MODEL, Listings, TableModel
+
+
+class Pick(BaseModel):
+    listing_id: UUID
+    title: str
+    price: float
+    why: str = Field(description='Why this listing fits what the buyer asked for, in one sentence')
+
+
+class Picks(BaseModel):
+    picks: list[Pick] = Field(description='Only listings that fit; an empty list when none do')
+    note: str = Field(description='One or two sentences to the buyer')
+
 
 # Before the first Pixeltable operation, so the queries the agent runs show up under its tool calls in Logfire.
 logfire.configure(send_to_logfire='if-token-present')
@@ -23,7 +36,7 @@ PixeltableInstrumentor().instrument(span_level='debug')
 TableModel.bind_all('market')
 
 agent = Agent(
-    'google:gemini-3.8-flash',
+    f'google:{MODEL}',
     output_type=Picks,
     instructions=(
         'You help buyers on a secondhand marketplace. Search the listings, and recommend only '
@@ -37,12 +50,14 @@ agent = Agent(
 @agent.output_validator
 def picks_are_listed(output: Picks) -> Picks:
     """Every pick must be a real listing at its real price."""
+    ids = [pick.listing_id for pick in output.picks]
+    rows = Listings.where(Listings.id.isin(ids)).select(Listings.id, Listings.price).collect()
+    prices = {row['id']: row['price'] for row in rows}
     for pick in output.picks:
-        rows = Listings.where(Listings.id == pick.listing_id).select(Listings.price).collect()
-        if len(rows) == 0:
+        if pick.listing_id not in prices:
             raise ModelRetry(f'{pick.listing_id} is not a listing id. Query the listing and use its id.')
-        if rows[0]['price'] != pick.price:
-            raise ModelRetry(f"Listing {pick.listing_id} costs {rows[0]['price']}, not {pick.price}.")
+        if prices[pick.listing_id] != pick.price:
+            raise ModelRetry(f'Listing {pick.listing_id} costs {prices[pick.listing_id]}, not {pick.price}.')
     return output
 
 
