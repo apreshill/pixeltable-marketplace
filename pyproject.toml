@@ -8,7 +8,7 @@ dependencies = [
     "fastapi>=0.162.0",
     "google-genai>=2.33.0",
     "logfire>=5.4.0",
-    "pixeltable[serve,otel]==0.7.22",
+    "pixeltable[serve,otel]==0.7.23",
     "pydantic-ai-harness[pixeltable]>=0.66.0",
     "pydantic-ai-slim[google]>=2.66.0",
 ]
