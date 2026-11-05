@@ -4,11 +4,11 @@ A secondhand marketplace app. Sellers post photos, and Gemini writes the listing
 
 | To | Send | Get back |
 |---|---|---|
-| Post a listing: `POST /listings` | seller name, price, three photos | the listing Gemini wrote from the photos (title, category, condition, color, description), the first photo cropped to the item, and an 11-second video ad: the three photos with a slow zoom, the title and price as a caption, and Gemini's voice reading a two-sentence pitch |
+| Post a listing: `POST /listings` | seller name, price, three photos | the listing Gemini wrote from the photos (title, category, condition, color, description), the first photo cropped to the item, and an 11-second video: the three photos with a slow zoom, the title and price as a caption, and Gemini's voice reading a two-sentence pitch |
 | See a listing: `GET /listings/{id}` | listing ID | seller, price, title and Gemini's listing |
-| Search in words: `GET /search` | a description, e.g. "warm light for a reading nook" | the closest listings, by their first photo |
+| Search in words: `GET /search` | a description, e.g. "warm light for a reading nook", and optionally a condition | the closest listings, by their first photo |
 | Search with a photo: `POST /similar` | a photo | the closest listings, by their first photo |
-| Ask: `POST /ask`, or `python agent.py` | a question, e.g. "a like-new lamp under $100?" | the listings that fit, each with a reason, and a note to the shopper |
+| Ask: `python agent.py` | a question, e.g. "a like-new lamp under $100?" | the listings that fit, each with a reason, and a note to the shopper |
 
 The app is built with FastAPI and Pydantic, with [Pixeltable](https://github.com/pixeltable/pixeltable) as its database.
 
@@ -18,7 +18,7 @@ You already know type safety from Pydantic. Pixeltable extends it to the images,
 - **Coming in.** Pixeltable checks every image, video, audio file and document at insert, and can validate outputs, including from LLMs, against your Pydantic model. So a bad file or a bad LLM output can't break your app. Here, an upload that isn't an image is refused before Gemini sees it, and Gemini's JSON is validated against `ListingDetails`.
 - **Going out.** Pixeltable returns data as your Pydantic models, in query results and in your API's responses, so your editor, your type checker and FastAPI can use it directly. Here, `GET /listings/{id}` returns a `Listing`, and the `/listings` route types `details` as `ListingDetails`.
 
-Every listing's `details` has the same fields, so the app can query what Gemini wrote like any other data. A shopper can send "a like-new lamp under $100" to `POST /ask`, and the app filters on the condition Gemini wrote, the same way it filters on the price the seller set.
+Every listing's `details` has the same fields, so the app can query what Gemini wrote like any other data. `condition` is its own column, taken from what Gemini wrote, so `/search` filters on it the same way the app could filter on the price the seller set.
 
 ```
 Without Pixeltable                         With Pixeltable
@@ -38,7 +38,8 @@ Here is the `Listings` table in `app.py`:
 
 - The photo columns have Pixeltable's `Image` type, so Pixeltable opens each upload and refuses one that isn't an image.
 - When a column is set to a Pixeltable call, like `pxtf.gemini.generate_content`, Pixeltable runs that call on every new row.
-- `parse_details()` validates Gemini's JSON against `ListingDetails`, and its return type makes `ListingDetails` the type of the `details` column.
+- `parse_details()` validates Gemini's JSON against `ListingDetails`, and its return type makes `ListingDetails` the type of the `details` column. An answer that doesn't fit fails the insert.
+- The fields the app filters on or uses, like `condition`, are their own typed columns.
 
 ```python
 @pxt.udf
@@ -54,20 +55,21 @@ class Listings(TableModel, name='listings'):
     photo_2: pxt.Image
     photo_3: pxt.Image
 
-    # Gemini writes the listing from the photos; parse_details() turns Gemini's JSON into a ListingDetails.
+    # The listing's details, validated against ListingDetails; an answer that doesn't fit fails the insert.
     response = pxtf.gemini.generate_content(
-        [PROMPT, photo_1, photo_2, photo_3], model='gemini-3.8-flash', config=LISTING_CONFIG
+        [DETAILS_PROMPT, photo_1, photo_2, photo_3], model=MODEL, config=json_config(ListingDetails)
     )
-    details = parse_details(response.candidates[0].content.parts[0].text.astype(pxt.String))
+    details = parse_details(gemini_text(response))
+    title = details.title.astype(pxt.String)
+    condition = details.condition.astype(pxt.String)
     ...
 ```
 
 The app also does these things, each from a column or query in the same file, with no worker or sync script:
 
 - Each listing gets an 11-second video made from its photos and narrated by Gemini.
-- `/search` finds listings by their first photo from a description in words.
-- `POST /ask` answers shoppers' questions. Gemini calls the app's `find_listings` query as a tool, Pixeltable runs the query, and Gemini picks from the results.
-- `agent.py` does the same job as `POST /ask`, as a Pydantic AI agent. It reads the same listings table and returns the same `Picks` model, the list of listings chosen for the shopper.
+- `/search` finds listings by their first photo from a description in words, optionally only in one condition.
+- `agent.py` answers shoppers' questions as a Pydantic AI agent. It searches and queries the listings table and returns `Picks`, the listings it chose for the shopper.
 
 ## Run the app
 
@@ -158,10 +160,10 @@ Start a Python shell in this folder. `bind_all('market')` connects the table cla
 from app import Listings, TableModel
 
 TableModel.bind_all('market')
-Listings.where(Listings.details.condition == 'like new').select(Listings.title, Listings.price).collect()
+Listings.where(Listings.condition == 'like new').select(Listings.title, Listings.price).collect()
 ```
 
-With the 19 sample listings, the query returns four listings, e.g. `Black Adjustable LED Desk Lamp` at 45.0.
+The query returns the like-new listings, e.g. `Black Adjustable LED Desk Lamp` at 45.0. Gemini writes each condition, so the count can differ from run to run.
 
 ### 8. Search the photos in words
 
@@ -169,6 +171,7 @@ From the API:
 
 ```bash
 curl "<url>/search?q=warm%20light%20for%20a%20reading%20nook&limit=3"
+curl "<url>/search?q=lamp&condition=like%20new"
 ```
 
 From the same Python shell:
@@ -182,17 +185,7 @@ The `/search` route serves `search`, a query function in `app.py`. The Python co
 
 ### 9. Ask a question
 
-```bash
-curl -X POST <url>/ask -H 'content-type: application/json' \
-  -d '{"question": "A like-new lamp under $100?"}'
-```
-
-The `/ask` response has its own `job_url`. Run `curl` on that `job_url` until `status` is `done`. The finished job's `result` has two parts:
-
-- `picks`: Gemini's answer, as a `Picks` model. Its `picks` field lists the listings Gemini chose, each with a `why`, and its `note` field sums up the answer.
-- `found`: the listings the `find_listings` query returned, which Gemini chose from. When we asked this question, Gemini called `find_listings` with `condition` set to `like new`, and the query returned only like-new listings.
-
-Ask a question through the Pydantic AI agent:
+The Pydantic AI agent searches and queries the listings table, and answers as `Picks`: the listings it chose, each with a `why`, and a `note` to the shopper. Its output validator checks that every pick is a real listing at its real price.
 
 ```bash
 python agent.py "Something warm to read by, under \$150?"
@@ -232,7 +225,7 @@ claude mcp login logfire
 
 ## Files
 
-- `app.py`: the app: the Pydantic models, the Pixeltable tables (`Listings` for listings, `Asks` for shoppers' questions), and the FastAPI routes, which Pixeltable's `FastAPIRouter` builds from the tables and queries. `pxt schema update` creates the tables from this file, and `pxt service update` serves the routes.
-- `agent.py`: the Pydantic AI version of `POST /ask`. The agent searches and queries the listings table with tools from Pixeltable's add-on for Pydantic AI Harness, a package of add-ons for Pydantic AI agents. `pyproject.toml` installs it as `pydantic-ai-harness[pixeltable]` (0.66.0 or later, released in Pydantic AI 2.66.0).
+- `app.py`: the app: the Pydantic models, the `Listings` table, and the FastAPI routes, which Pixeltable's `FastAPIRouter` builds from the tables and queries. `pxt schema update` creates the tables from this file, and `pxt service update` serves the routes.
+- `agent.py`: the buyer's agent, built with Pydantic AI. The agent searches and queries the listings table with tools from Pixeltable's add-on for Pydantic AI Harness, a package of add-ons for Pydantic AI agents. `pyproject.toml` installs it as `pydantic-ai-harness[pixeltable]` (0.66.0 or later, released in Pydantic AI 2.66.0).
 - `scripts/seed.py`: posts the sample listings
 - `scripts/search_test.py`: runs 17 searches, each with a known right listing. `/search` ranks that listing first in all 17.

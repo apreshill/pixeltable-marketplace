@@ -1,22 +1,22 @@
-"""The whole marketplace: its Pydantic models, its tables, the AI that runs on them, and its API.
+"""A secondhand marketplace on Pixeltable: the Pydantic models, the listings table, and its API.
 
-A seller sends three photos. Pixeltable checks each one is an image, a model writes the
-listing into `ListingDetails`, and the photos become a narrated listing video. Buyers search
-the listings by text or by photo, or ask the buyer's agent, which is a table too: each question
-is a row, and Gemini answers it by calling the app's own query as a tool (`pxt.tools`).
-
-The same table also works with Pydantic AI: see agent.py.
+A seller posts three photos and a price. Gemini writes the listing's details, which must validate
+against `ListingDetails`; Gemini finds the item in the first photo for a crop; and the photos become
+a narrated video. Shoppers search the photos in words or with a photo. agent.py is a Pydantic AI
+agent over the same table.
 
     pxt schema update app.py market -f
     pxt service update app.py market -f
 """
 
 import tempfile
+from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
 import av
 import PIL.Image
+import PIL.ImageOps
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
@@ -24,13 +24,19 @@ import pixeltable as pxt
 import pixeltable.functions as pxtf
 from pixeltable.serving import FastAPIRouter
 
+MODEL = 'gemini-3.8-flash'
+TTS_MODEL = 'gemini-3.8-flash-tts'
+EMBEDDING_MODEL = 'gemini-embedding-2'
+
+Condition = Literal['new', 'like new', 'good', 'fair']
+
 
 class ListingDetails(BaseModel):
-    """What the model writes from a seller's photos."""
+    """What Gemini writes from a seller's photos."""
 
     title: str = Field(description='A listing title, under 60 characters')
     category: Literal['cameras', 'bikes', 'home', 'bags', 'instruments', 'other']
-    condition: Literal['new', 'like new', 'good', 'fair']
+    condition: Condition
     color: str
     description: str = Field(description='Two or three sentences for buyers, about only what the photos show')
     pitch: str = Field(description='Narration for a 10-second listing video: two short spoken sentences, 15 to 25 words')
@@ -55,30 +61,23 @@ class Listing(BaseModel):
     details: ListingDetails
 
 
-class Pick(BaseModel):
-    listing_id: UUID
-    title: str
-    price: float
-    why: str = Field(description='Why this listing fits what the buyer asked for, in one sentence')
-
-
-class Picks(BaseModel):
-    """The buyer's agent's answer. Both agents return it: the one in this file and agent.py."""
-
-    picks: list[Pick] = Field(description='Only listings that fit; an empty list when none do')
-    note: str = Field(description='One or two sentences to the buyer')
-
-
 TableModel = pxt.model_base()
 
-LISTING_CONFIG = {'response_mime_type': 'application/json', 'response_json_schema': ListingDetails.model_json_schema()}
-PROMPT = 'Write a marketplace listing for the item in these photos. Describe only what the photos show.'
-BOX_CONFIG = {'response_mime_type': 'application/json', 'response_json_schema': Box.model_json_schema()}
-# An empty box can't be cropped, so a hidden item gets the whole photo instead.
+DETAILS_PROMPT = 'Write a marketplace listing for the item in these photos. Describe only what the photos show.'
 BOX_PROMPT = (
     'Return the bounding box of this item in the photo. If the item is not visible, or most of it is hidden, '
     'return the whole photo: ymin 0, xmin 0, ymax 1000, xmax 1000. Item:'
 )
+
+
+def json_config(model: type[BaseModel]) -> dict:
+    """Gemini config that asks for JSON in the shape of `model`."""
+    return {'response_mime_type': 'application/json', 'response_json_schema': model.model_json_schema()}
+
+
+def gemini_text(response: pxt.exprs.Expr) -> pxt.exprs.Expr:
+    """The text of a Gemini response."""
+    return response.candidates[0].content.parts[0].text.astype(pxt.String)
 
 
 @pxt.udf
@@ -87,50 +86,47 @@ def parse_details(raw: str) -> pxt.Json[ListingDetails]:
 
 
 @pxt.udf
+def parse_box(raw: str) -> pxt.Json[Box]:
+    return Box.model_validate_json(raw).model_dump()
+
+
+@pxt.udf
+def crop_to_box(photo: PIL.Image.Image, box: pxt.Json[Box], margin: float = 0.08) -> PIL.Image.Image:
+    """Crop `photo` to `box`, with `margin` of the box's size added on each side, within the photo."""
+    b = Box.model_validate(box)
+    width, height = photo.size
+    pad_x, pad_y = (b.xmax - b.xmin) * margin, (b.ymax - b.ymin) * margin
+    left = max(0.0, b.xmin - pad_x) * width / 1000
+    top = max(0.0, b.ymin - pad_y) * height / 1000
+    right = min(1000.0, b.xmax + pad_x) * width / 1000
+    bottom = min(1000.0, b.ymax + pad_y) * height / 1000
+    if right - left < 1 or bottom - top < 1:
+        return photo  # an empty box: keep the whole photo
+    return photo.crop((round(left), round(top), round(right), round(bottom)))
+
+
+@pxt.udf
 def still(image: PIL.Image.Image, seconds: float = 4.0) -> pxt.Video:
-    """A video that holds one photo for `seconds`."""
+    """A square video that holds one photo for `seconds`, padded rather than stretched.
+
+    Pixeltable ships no function that turns one image into a video, so this encodes one with PyAV. The file
+    goes in a new temp directory, which Pixeltable moves into its media store.
+    """
     size, fps = 720, 24
-    path = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False).name
-    frame = av.VideoFrame.from_image(image.convert('RGB').resize((size, size)))
-    with av.open(path, 'w') as out:
+    path = Path(tempfile.mkdtemp()) / 'still.mp4'
+    frame = av.VideoFrame.from_image(PIL.ImageOps.pad(image.convert('RGB'), (size, size)))
+    with av.open(str(path), 'w') as out:
         stream = out.add_stream('libx264', rate=fps)
         stream.width, stream.height, stream.pix_fmt = size, size, 'yuv420p'
         for _ in range(int(seconds * fps)):
             out.mux(stream.encode(frame))
         out.mux(stream.encode())
-    return path
-
-
-@pxt.udf
-def caption(title: str, price: float) -> str:
-    return f'{title}  ${price:,.0f}'
+    return str(path)
 
 
 def slow_zoom(photo: pxt.exprs.Expr, zoom_in: bool) -> pxt.exprs.Expr:
     start, end = (1.0, 1.12) if zoom_in else (1.12, 1.0)
     return pxtf.video.zoom(still(photo), start_scale=start, end_scale=end)
-
-
-def crop_to_box(photo: pxt.exprs.Expr, box: pxt.exprs.Expr) -> pxt.exprs.Expr:
-    # PIL crops an empty box to a 0x0 image, which fails the whole insert when it's stored,
-    # so each far edge stays at least 1 pixel past its near edge.
-    def px(value: pxt.exprs.Expr, size: pxt.exprs.Expr) -> pxt.exprs.Expr:
-        return (value.astype(pxt.Int) * size) // 1000
-
-    # Each edge moves out by 8% of the box's size, within the photo, so the item keeps some room around it.
-    x0, y0 = box.xmin.astype(pxt.Int), box.ymin.astype(pxt.Int)
-    x1, y1 = box.xmax.astype(pxt.Int), box.ymax.astype(pxt.Int)
-    pad_x, pad_y = (x1 - x0) * 8 // 100, (y1 - y0) * 8 // 100
-    xmin = pxtf.math.to_int(pxtf.json.max([x0 - pad_x, 0]))
-    xmax = pxtf.math.to_int(pxtf.json.min([x1 + pad_x, 1000]))
-    ymin = pxtf.math.to_int(pxtf.json.max([y0 - pad_y, 0]))
-    ymax = pxtf.math.to_int(pxtf.json.min([y1 + pad_y, 1000]))
-
-    left = pxtf.math.to_int(pxtf.json.min([px(xmin, photo.width), photo.width - 1]))
-    top = pxtf.math.to_int(pxtf.json.min([px(ymin, photo.height), photo.height - 1]))
-    right = pxtf.math.to_int(pxtf.json.max([px(xmax, photo.width), left + 1]))
-    bottom = pxtf.math.to_int(pxtf.json.max([px(ymax, photo.height), top + 1]))
-    return photo.crop([left, top, right, bottom])
 
 
 class Listings(TableModel, name='listings'):
@@ -141,21 +137,23 @@ class Listings(TableModel, name='listings'):
     photo_2: pxt.Image
     photo_3: pxt.Image
 
-    # Gemini writes the listing from the photos; parse_details() turns Gemini's JSON into a ListingDetails.
+    # The listing's details, validated against ListingDetails; an answer that doesn't fit fails the insert.
     response = pxtf.gemini.generate_content(
-        [PROMPT, photo_1, photo_2, photo_3], model='gemini-3.8-flash', config=LISTING_CONFIG
+        [DETAILS_PROMPT, photo_1, photo_2, photo_3], model=MODEL, config=json_config(ListingDetails)
     )
-    details = parse_details(response.candidates[0].content.parts[0].text.astype(pxt.String))
+    details = parse_details(gemini_text(response))
     title = details.title.astype(pxt.String)
+    condition = details.condition.astype(pxt.String)
     description = details.description.astype(pxt.String)
+    pitch = details.pitch.astype(pxt.String)
 
-    # Gemini finds the item it named in the first photo, and the photo is cropped to it.
-    box_response = pxtf.gemini.generate_content([BOX_PROMPT, title, photo_1], model='gemini-3.8-flash', config=BOX_CONFIG)
-    box = box_response.parsed.astype(pxt.Json[Box])
+    # The item's box in the first photo, validated against Box, and the photo cropped to it.
+    box_response = pxtf.gemini.generate_content([BOX_PROMPT, title, photo_1], model=MODEL, config=json_config(Box))
+    box = parse_box(gemini_text(box_response))
     cropped_photo = crop_to_box(photo_1, box)
 
-    # The photos become a narrated listing video.
-    narration = pxtf.gemini.generate_speech(details.pitch.astype(pxt.String), model='gemini-3.8-flash-tts', voice='Kore')
+    # A narrated video: the three photos with slow zooms, the title and price as a caption, and the pitch read aloud.
+    narration = pxtf.gemini.generate_speech(pitch, model=TTS_MODEL, voice='Kore')
     slideshow = pxtf.video.transition(
         pxtf.video.transition(slow_zoom(photo_1, True), slow_zoom(photo_2, False), effect='fade', duration=0.6),
         slow_zoom(photo_3, True),
@@ -164,90 +162,41 @@ class Listings(TableModel, name='listings'):
     )
     promo = pxtf.video.with_audio(
         pxtf.video.overlay_text(
-            slideshow, caption(title, price), font_size=30, color='white', horizontal_align='center',
-            box=True, box_color='black', box_opacity=0.6, vertical_align='bottom', vertical_margin=36,
+            slideshow, pxtf.string.format('{}  ${}', title, pxtf.math.to_int(price)), font_size=30, color='white',
+            horizontal_align='center', box=True, box_color='black', box_opacity=0.6, vertical_align='bottom',
+            vertical_margin=36,
         ),
         narration,
     )
 
     __indexes__ = [
-        # Search the listings by photo, or by words that describe one.
-        pxt.EmbeddingIndex(photo_1, embedding=pxtf.gemini.embed_content.using(model='gemini-embedding-2')),
+        # Search by the first photo, from words or from another photo.
+        pxt.EmbeddingIndex(photo_1, embedding=pxtf.gemini.embed_content.using(model=EMBEDDING_MODEL)),
+        pxt.BtreeIndex(condition),
     ]
 
 
 @pxt.query
-def search(q: str, limit: int = 5):
-    # Search the photos, not the description: a photo shows what a description leaves out, like
-    # the color of a lamp's light (scripts/search_test.py: 17 of 17 searches, against 10 of 17).
+def search(q: str, condition: str | None = None, limit: int = 5):
+    """Listings whose first photo best matches `q`, optionally only those in `condition`."""
     score = Listings.photo_1.similarity(string=q)
     return (
-        Listings.order_by(score, asc=False)
+        Listings.where((condition == None) | (Listings.condition == condition))  # noqa: E711
+        .order_by(score, asc=False)
         .limit(limit)
-        .select(Listings.id, Listings.title, Listings.price, Listings.photo_1, score=score)
+        .select(Listings.id, Listings.title, Listings.price, Listings.condition, Listings.photo_1, score=score)
     )
 
 
 @pxt.query
 def similar(photo: pxt.Image, limit: int = 5):
+    """Listings whose first photo looks most like `photo`."""
     score = Listings.photo_1.similarity(image=photo)
     return (
         Listings.order_by(score, asc=False)
         .limit(limit)
-        .select(Listings.id, Listings.title, Listings.price, Listings.photo_1, score=score)
+        .select(Listings.id, Listings.title, Listings.price, Listings.condition, Listings.photo_1, score=score)
     )
-
-
-@pxt.query
-def find_listings(looking_for: str, max_price: float, condition: str):
-    """Find listings whose photos match what the buyer is looking for, at or under max_price, in the condition asked for.
-
-    Args:
-        looking_for: What the buyer wants, in their words, without the price or condition.
-        max_price: The most the buyer will pay, in dollars. When they don't say, use 100000.
-        condition: One of 'new', 'like new', 'good', 'fair'. When they don't say, use 'any'.
-    """
-    score = Listings.photo_1.similarity(string=looking_for)
-    # Gemini wrote each listing's condition, and ListingDetails allows only four values, so this filter misses nothing.
-    return (
-        Listings.where((Listings.price <= max_price) & ((condition == 'any') | (Listings.details.condition == condition)))
-        .order_by(score, asc=False)
-        .limit(5)
-        .select(listing_id=pxtf.uuid.to_string(Listings.id), title=Listings.title, price=Listings.price,
-                condition=Listings.details.condition, description=Listings.description, score=score)
-    )
-
-
-TOOLS = pxt.tools(find_listings)
-ASK_INSTRUCTIONS = 'You help buyers on a secondhand marketplace. Call find_listings to search the listings.'
-PICK_INSTRUCTIONS = (
-    '\n\nRecommend only the listings that fit what the buyer asked for, with their listing_id, title, and '
-    'price exactly as found. An empty list is a fine answer.\n\nListings the search found: '
-)
-PICKS_CONFIG = {'response_mime_type': 'application/json', 'response_json_schema': Picks.model_json_schema()}
-
-
-@pxt.udf
-def parse_picks(raw: str) -> pxt.Json[Picks]:
-    return Picks.model_validate_json(raw).model_dump(mode='json')
-
-
-class Asks(TableModel, name='asks'):
-    """The buyer's agent: each question is a row, and every step of the answer is a column."""
-
-    id = pxt.Column(value=pxtf.uuid.uuid7(), primary_key=True)
-    question: pxt.String
-
-    # Gemini decides how to call the app's own query, and Pixeltable runs the call.
-    tool_call = pxtf.gemini.generate_content(
-        question, model='gemini-3.8-flash', tools=TOOLS, config={'system_instruction': ASK_INSTRUCTIONS}
-    )
-    found = pxtf.gemini.invoke_tools(TOOLS, tool_call)
-    # Gemini picks from what the query found, into the app's own Pydantic model.
-    answer = pxtf.gemini.generate_content(
-        question + PICK_INSTRUCTIONS + pxtf.json.dumps(found), model='gemini-3.8-flash', config=PICKS_CONFIG
-    )
-    picks = parse_picks(answer.candidates[0].content.parts[0].text.astype(pxt.String))
 
 
 router = FastAPIRouter(name='market')
@@ -257,14 +206,10 @@ router.add_insert_route(
     inputs=[Listings.seller, Listings.price],
     uploadfile_inputs=[Listings.photo_1, Listings.photo_2, Listings.photo_3],
     outputs=[Listings.id, Listings.title, Listings.details, Listings.cropped_photo, Listings.promo],
-    # Gemini and the video take about 15 seconds, so the POST returns a job to poll.
-    background=True,
+    background=True,  # the Gemini calls and the video take about 15 seconds
 )
 router.add_query_route(path='/search', query=search, method='get')
 router.add_query_route(path='/similar', query=similar, uploadfile_inputs=['photo'])
-router.add_insert_route(
-    Asks, path='/ask', inputs=[Asks.question], outputs=[Asks.id, Asks.found, Asks.picks], background=True
-)
 
 
 api = FastAPI(title='Marketplace')
@@ -273,7 +218,7 @@ api.include_router(router)
 
 @api.get('/listings/{listing_id}')
 def get_listing(listing_id: UUID) -> Listing:
-    """An ordinary FastAPI route that returns a row as the app's own Pydantic model."""
+    # A query route returns columns; this handler returns the app's own Listing model, which a route can't.
     rows = (
         Listings.where(Listings.id == listing_id)
         .select(Listings.id, Listings.seller, Listings.price, Listings.title, Listings.details)
