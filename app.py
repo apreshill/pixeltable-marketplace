@@ -5,8 +5,8 @@ against `ListingDetails`; Gemini finds the item in the first photo for a crop; a
 a narrated video. Shoppers search the photos in words or with a photo. agent.py is a Pydantic AI
 agent over the same table.
 
-    pxt schema update app.py market -f
-    pxt service update app.py market -f
+    pxt schema update app.py market
+    pxt service update app.py market
 """
 
 import tempfile
@@ -143,7 +143,9 @@ class Listings(TableModel, name='listings'):
     )
     details = parse_details(gemini_text(response))
     title = details.title.astype(pxt.String)
+    category = details.category.astype(pxt.String)
     condition = details.condition.astype(pxt.String)
+    color = details.color.astype(pxt.String)
     description = details.description.astype(pxt.String)
     pitch = details.pitch.astype(pxt.String)
 

@@ -92,10 +92,12 @@ If you use a coding agent, run `pxt skills install`. It adds the Pixeltable skil
 ### 2. Create the tables and start the app
 
 ```bash
-pxt schema update app.py market -f
-pxt service update app.py market -f
+pxt schema update app.py market
+pxt service update app.py market
 pxt service list
 ```
+
+Each `update` command shows its plan and asks before it applies it.
 
 `pxt service list` prints the app's URL, e.g. `http://127.0.0.1:53924`. Use that URL as `<url>` below.
 
@@ -209,7 +211,7 @@ The Pixeltable daemon reads the environment only when it starts, so restart it. 
 
 ```bash
 pxt daemon restart
-pxt service update app.py market -f --otel
+pxt service update app.py market --otel
 ```
 
 Post a listing as in step 3. In Logfire, the listing is a `pixeltable.insert` trace, with a span for each call Pixeltable made to fill the row's columns. Each span names its column. In one run, Gemini took 12.7 seconds to write `response`, 4.3 seconds to read the pitch into `narration`, and 1.6 seconds to embed the first photo for search. The `POST /listings` request is a separate trace, because the route returns a job before the insert runs.
