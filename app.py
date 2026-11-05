@@ -10,14 +10,10 @@ agent over the same table.
     pxt service update app.py market
 """
 
-import tempfile
-from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
-import av
 import PIL.Image
-import PIL.ImageOps
 import pixeltable as pxt
 import pixeltable.functions as pxtf
 from fastapi import FastAPI, HTTPException
@@ -75,7 +71,7 @@ def json_config(model: type[BaseModel]) -> dict:
     return {'response_mime_type': 'application/json', 'response_json_schema': model.model_json_schema()}
 
 
-def gemini_text(response: pxt.exprs.Expr) -> pxt.exprs.Expr:
+def gemini_text(response):
     """The text of a Gemini response."""
     return response.candidates[0].content.parts[0].text.astype(pxt.String)
 
@@ -105,28 +101,11 @@ def crop_to_box(photo: PIL.Image.Image, box: pxt.Json[Box], margin: float = 0.08
     return photo.crop((round(left), round(top), round(right), round(bottom)))
 
 
-@pxt.udf
-def still(image: PIL.Image.Image, seconds: float = 4.0) -> pxt.Video:
-    """A square video that holds one photo for `seconds`, padded rather than stretched.
-
-    Pixeltable ships no function that turns one image into a video, so this encodes one with PyAV. The file
-    goes in a new temp directory, which Pixeltable moves into its media store.
-    """
-    size, fps = 720, 24
-    path = Path(tempfile.mkdtemp()) / 'still.mp4'
-    frame = av.VideoFrame.from_image(PIL.ImageOps.pad(image.convert('RGB'), (size, size)))
-    with av.open(str(path), 'w') as out:
-        stream = out.add_stream('libx264', rate=fps)
-        stream.width, stream.height, stream.pix_fmt = size, size, 'yuv420p'
-        for _ in range(int(seconds * fps)):
-            out.mux(stream.encode(frame))
-        out.mux(stream.encode())
-    return str(path)
-
-
-def slow_zoom(photo: pxt.exprs.Expr, zoom_in: bool) -> pxt.exprs.Expr:
+def slow_zoom(photo, zoom_in: bool):
+    """Four seconds of `photo`, slowly zooming in or out."""
     start, end = (1.0, 1.12) if zoom_in else (1.12, 1.0)
-    return pxtf.video.zoom(still(photo), start_scale=start, end_scale=end)
+    clip = photo.resize((720, 720)).to_video(duration=4.0)
+    return pxtf.video.zoom(clip, start_scale=start, end_scale=end)
 
 
 class Listings(TableModel, name='listings'):
