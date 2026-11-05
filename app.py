@@ -1,3 +1,4 @@
+# ruff: noqa: F821  # TableModel class bodies refer to columns by name
 """A secondhand marketplace on Pixeltable: the Pydantic models, the listings table, and its API.
 
 A seller posts three photos and a price. Gemini writes the listing's details, which must validate
@@ -17,12 +18,11 @@ from uuid import UUID
 import av
 import PIL.Image
 import PIL.ImageOps
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
-
 import pixeltable as pxt
 import pixeltable.functions as pxtf
+from fastapi import FastAPI, HTTPException
 from pixeltable.serving import FastAPIRouter
+from pydantic import BaseModel, Field
 
 MODEL = 'gemini-3.8-flash'
 TTS_MODEL = 'gemini-3.8-flash-tts'
@@ -171,7 +171,7 @@ class Listings(TableModel, name='listings'):
         narration,
     )
 
-    __indexes__ = [
+    __indexes__ = [  # noqa: RUF012
         # Search by the first photo, from words or from another photo.
         pxt.EmbeddingIndex(photo_1, embedding=pxtf.gemini.embed_content.using(model=EMBEDDING_MODEL)),
         pxt.BtreeIndex(condition),
@@ -183,7 +183,7 @@ def search(q: str, condition: str | None = None, limit: int = 5):
     """Listings whose first photo best matches `q`, optionally only those in `condition`."""
     score = Listings.photo_1.similarity(string=q)
     return (
-        Listings.where((condition == None) | (Listings.condition == condition))  # noqa: E711
+        Listings.where((condition == None) | (Listings.condition == condition))
         .order_by(score, asc=False)
         .limit(limit)
         .select(Listings.id, Listings.title, Listings.price, Listings.condition, Listings.photo_1, score=score)
