@@ -15,7 +15,7 @@ The app is built with FastAPI and Pydantic, with [Pixeltable](https://github.com
 You already know type safety from Pydantic. Pixeltable extends it to the images, video and LLM output you store, and guarantees that everything derived from them is made the same way for every file. This app shows it in three places:
 
 - **Every row.** Your Pydantic model defines the shape of your data. Pixeltable calls your functions, including LLMs, on every row, and stores each result in that shape. Everything derived from your files is made the same way for every file, e.g., frames are extracted at the frame rate you set, and an index is always queried with the embedding model that built it. Here, Gemini writes every listing from the seller's photos, in the shape of the Pydantic model `ListingDetails`.
-- **Coming in.** Pixeltable checks every image, video, audio file and document at insert, and can validate outputs, including from LLMs, against your Pydantic model. So a bad file or a bad LLM output can't break your app. Here, an upload that isn't an image is refused before Gemini sees it, and Gemini's JSON is validated against `ListingDetails`.
+- **Coming in.** Pixeltable checks every image, video, audio file and document at insert, and can check outputs, including from LLMs, against the fields and types of your Pydantic model. So a bad file or a bad LLM output can't break your app. Here, an upload that isn't an image is refused before Gemini sees it, and Gemini's JSON must have every field of `ListingDetails`, each with the right type.
 - **Going out.** Pixeltable returns data as your Pydantic models, in query results and in your API's responses, so your editor, your type checker and FastAPI can use it directly. Here, `GET /listings/{id}` returns a `Listing`, and the `/listings` route types `details` as `ListingDetails`.
 
 Every listing's `details` has the same fields, so the app can query what Gemini wrote like any other data. `condition` is its own column, taken from what Gemini wrote, so `/search` filters on it the same way the app could filter on the price the seller set.
@@ -38,15 +38,10 @@ Here is the `Listings` table in `app.py`:
 
 - The photo columns have Pixeltable's `Image` type, so Pixeltable opens each upload and refuses one that isn't an image.
 - When a column is set to a Pixeltable call, like `pxtf.gemini.generate_content`, Pixeltable runs that call on every new row.
-- `parse_details()` validates Gemini's JSON against `ListingDetails`, and its return type makes `ListingDetails` the type of the `details` column. An answer that doesn't fit fails the insert.
+- `response.parsed` is Gemini's answer as JSON, and `.astype(pxt.Json[ListingDetails])` makes `ListingDetails` the type of the `details` column. An answer with a missing field or a field of the wrong type fails the insert.
 - The fields the app filters on or uses, like `condition`, are their own typed columns.
 
 ```python
-@pxt.udf
-def parse_details(raw: str) -> pxt.Json[ListingDetails]:
-    return ListingDetails.model_validate_json(raw).model_dump()
-
-
 class Listings(TableModel, name='listings'):
     id = pxt.Column(value=pxtf.uuid.uuid7(), primary_key=True)
     seller: pxt.String
@@ -55,11 +50,11 @@ class Listings(TableModel, name='listings'):
     photo_2: pxt.Image
     photo_3: pxt.Image
 
-    # The listing's details, validated against ListingDetails; an answer that doesn't fit fails the insert.
+    # The listing's details as ListingDetails; an answer with a missing field or a wrong type fails the insert.
     response = pxtf.gemini.generate_content(
         [DETAILS_PROMPT, photo_1, photo_2, photo_3], model=MODEL, config=json_config(ListingDetails)
     )
-    details = parse_details(gemini_text(response))
+    details = response.parsed.astype(pxt.Json[ListingDetails])
     title = details.title.astype(pxt.String)
     condition = details.condition.astype(pxt.String)
     ...
@@ -140,11 +135,7 @@ pxt get market/listings <listing_id> --cols title,price,narration,promo
 
 `app.py` sets the `/listings` route to return four columns. The row in Pixeltable has every column, including `narration`, the audio of Gemini reading the pitch. `narration` and `promo` are file paths you can open.
 
-If a listing fails, see why:
-
-```bash
-pxt errors market/listings
-```
+If a listing fails, the job's `error_detail` says why. The route stores a listing only when every column succeeds, so a failed listing leaves no row behind.
 
 ### 6. Post the 19 sample listings
 
@@ -154,7 +145,7 @@ python scripts/seed.py <url>
 
 ### 7. Query what Gemini wrote
 
-If Gemini wrote free text, one listing might say "like-new" and another "barely used", and a filter would miss one of them. Every stored `details` fits `ListingDetails`, where `condition` can only be `new`, `like new`, `good` or `fair`. Because Gemini can't write any other value, one filter finds every like-new listing.
+If Gemini wrote free text, one listing might say "like-new" and another "barely used", and a filter would miss one of them. `json_config()` gives Gemini the JSON schema of `ListingDetails`, where `condition` can only be `new`, `like new`, `good` or `fair`. Because Gemini can't write any other value, one filter finds every like-new listing.
 
 Start a Python shell in this folder. `bind_all('market')` connects the table classes in `app.py` to the `market` tables you created in step 2:
 
@@ -193,7 +184,19 @@ The Pydantic AI agent searches and queries the listings table, and answers as `P
 python agent.py "Something warm to read by, under \$150?"
 ```
 
-### 10. See every step in Logfire
+### 10. Change the app
+
+Edit `app.py`. Then see the plan, apply it to the tables, and restart the app on the new code:
+
+```bash
+pxt schema diff app.py market
+pxt schema update app.py market
+pxt service update app.py market
+```
+
+The plan lists each change to each table, e.g. a computed column whose expression changed, and whether the change is safe or destructive. Stored listings keep their values; for a column whose expression changed, `pxt schema update` prints the `pxt recompute` command that brings them up to date.
+
+### 11. See every step in Logfire
 
 Create a project in [Logfire](https://logfire.pydantic.dev), and make a write token for it. Then set these in the shell where you run `pxt`:
 

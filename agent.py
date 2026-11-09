@@ -39,8 +39,9 @@ agent = Agent(
     f'google:{MODEL}',
     output_type=Picks,
     instructions=(
-        'You help buyers on a secondhand marketplace. Search the listings, and recommend only '
-        'listings that fit what the buyer asked for, with their real id, title, and price. '
+        'You help buyers on a secondhand marketplace. To search the listings, call similarity_search on photo_1 '
+        "with words for what the buyer wants. Recommend only listings that fit the buyer's request, "
+        'with their real id, title, and price. '
         'An empty list is a fine answer: say so in the note when nothing fits.'
     ),
     capabilities=[Pixeltable(['market.listings'])],
