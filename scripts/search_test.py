@@ -41,7 +41,7 @@ def run(base_url: str) -> None:
         for query, expected in SEARCHES:
             rows = client.get('/search', params={'q': query, 'limit': 50}).raise_for_status().json()['rows']
             # Each sample listing has its own seller, so the seller identifies the listing.
-            sellers = [client.get(f'/listings/{r["id"]}').raise_for_status().json()['seller'] for r in rows]
+            sellers = [r['seller'] for r in rows]
             rank = sellers.index(seller_of[expected]) + 1 if seller_of[expected] in sellers else None
             hits += rank == 1
             print(f'{"PASS" if rank == 1 else "FAIL"}  rank {rank}  {query!r}  -> first: {rows[0]["title"]}')

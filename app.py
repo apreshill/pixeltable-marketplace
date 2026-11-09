@@ -1,8 +1,8 @@
 # ruff: noqa: F821  # TableModel class bodies refer to columns by name
 """A secondhand marketplace on Pixeltable: the Pydantic models, the listings table, and its API.
 
-A seller posts three photos and a price. Gemini writes the listing's details, which must validate
-against `ListingDetails`; Gemini finds the item in the first photo for a crop; and the photos become
+A seller posts three photos and a price. Gemini writes the listing's details in the shape of
+`ListingDetails`; Gemini finds the item in the first photo for a crop; and the photos become
 a narrated video. Shoppers search the photos in words or with a photo. agent.py is a Pydantic AI
 agent over the same table.
 
@@ -14,6 +14,7 @@ from typing import Literal
 from uuid import UUID
 
 import PIL.Image
+import PIL.ImageOps
 import pixeltable as pxt
 import pixeltable.functions as pxtf
 from fastapi import FastAPI, HTTPException
@@ -68,21 +69,6 @@ def json_config(model: type[BaseModel]) -> dict:
     return {'response_mime_type': 'application/json', 'response_json_schema': model.model_json_schema()}
 
 
-def gemini_text(response):
-    """The text of a Gemini response."""
-    return response.candidates[0].content.parts[0].text.astype(pxt.String)
-
-
-@pxt.udf
-def parse_details(raw: str) -> pxt.Json[ListingDetails]:
-    return ListingDetails.model_validate_json(raw).model_dump()
-
-
-@pxt.udf
-def parse_box(raw: str) -> pxt.Json[Box]:
-    return Box.model_validate_json(raw).model_dump()
-
-
 @pxt.udf
 def crop_to_box(photo: PIL.Image.Image, box: pxt.Json[Box], margin: float = 0.08) -> PIL.Image.Image:
     """Crop `photo` to `box`, with `margin` of the box's size added on each side, within the photo."""
@@ -98,10 +84,16 @@ def crop_to_box(photo: PIL.Image.Image, box: pxt.Json[Box], margin: float = 0.08
     return photo.crop((round(left), round(top), round(right), round(bottom)))
 
 
+@pxt.udf
+def square(photo: PIL.Image.Image, size: int) -> PIL.Image.Image:
+    """Crop `photo` to its central square, scaled to `size` pixels."""
+    return PIL.ImageOps.fit(photo, (size, size))
+
+
 def slow_zoom(photo, zoom_in: bool):
     """Four seconds of `photo`, slowly zooming in or out."""
     start, end = (1.0, 1.12) if zoom_in else (1.12, 1.0)
-    clip = photo.resize((720, 720)).to_video(duration=4.0)
+    clip = square(photo, 720).to_video(duration=4.0)
     return pxtf.video.zoom(clip, start_scale=start, end_scale=end)
 
 
@@ -113,11 +105,11 @@ class Listings(TableModel, name='listings'):
     photo_2: pxt.Image
     photo_3: pxt.Image
 
-    # The listing's details, validated against ListingDetails; an answer that doesn't fit fails the insert.
+    # The listing's details as ListingDetails; an answer with a missing field or a wrong type fails the insert.
     response = pxtf.gemini.generate_content(
         [DETAILS_PROMPT, photo_1, photo_2, photo_3], model=MODEL, config=json_config(ListingDetails)
     )
-    details = parse_details(gemini_text(response))
+    details = response.parsed.astype(pxt.Json[ListingDetails])
     title = details.title.astype(pxt.String)
     category = details.category.astype(pxt.String)
     condition = details.condition.astype(pxt.String)
@@ -125,9 +117,9 @@ class Listings(TableModel, name='listings'):
     description = details.description.astype(pxt.String)
     pitch = details.pitch.astype(pxt.String)
 
-    # The item's box in the first photo, validated against Box, and the photo cropped to it.
+    # The item's box in the first photo, and the photo cropped to it.
     box_response = pxtf.gemini.generate_content([BOX_PROMPT, title, photo_1], model=MODEL, config=json_config(Box))
-    box = parse_box(gemini_text(box_response))
+    box = box_response.parsed.astype(pxt.Json[Box])
     cropped_photo = crop_to_box(photo_1, box)
 
     # A narrated video: the three photos with slow zooms, the title and price as a caption, and the pitch read aloud.
@@ -140,7 +132,7 @@ class Listings(TableModel, name='listings'):
     )
     promo = pxtf.video.with_audio(
         pxtf.video.overlay_text(
-            slideshow, pxtf.string.format('{}  ${}', title, pxtf.math.to_int(price)), font_size=30, color='white',
+            slideshow, pxtf.string.format('{}  ${}', title, pxtf.math.to_int(price)), font_size=20, color='white',
             horizontal_align='center', box=True, box_color='black', box_opacity=0.6, vertical_align='bottom',
             vertical_margin=36,
         ),
@@ -162,7 +154,10 @@ def search(q: str, condition: str | None = None, limit: int = 5):
         Listings.where((condition == None) | (Listings.condition == condition))
         .order_by(score, asc=False)
         .limit(limit)
-        .select(Listings.id, Listings.title, Listings.price, Listings.condition, Listings.photo_1, score=score)
+        .select(
+            Listings.id, Listings.seller, Listings.title, Listings.price, Listings.condition, Listings.photo_1,
+            score=score,
+        )
     )
 
 
@@ -173,7 +168,10 @@ def similar(photo: pxt.Image, limit: int = 5):
     return (
         Listings.order_by(score, asc=False)
         .limit(limit)
-        .select(Listings.id, Listings.title, Listings.price, Listings.condition, Listings.photo_1, score=score)
+        .select(
+            Listings.id, Listings.seller, Listings.title, Listings.price, Listings.condition, Listings.photo_1,
+            score=score,
+        )
     )
 
 
