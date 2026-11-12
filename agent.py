@@ -2,6 +2,7 @@
 
 The agent searches and queries the app's listings table through the Pixeltable capability for
 Pydantic AI Harness, and answers as `Picks`. Its output validator checks each pick against the table.
+It keeps its notes across runs in a second Pixeltable table, `market.memory`.
 """
 
 import sys
@@ -11,7 +12,8 @@ import logfire
 from opentelemetry.instrumentation.pixeltable import PixeltableInstrumentor
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, ModelRetry
-from pydantic_ai_harness import Pixeltable
+from pydantic_ai_harness import Memory, Pixeltable
+from pydantic_ai_harness.memory import PixeltableMemoryStore
 
 from app import MODEL, Listings, TableModel
 
@@ -44,7 +46,10 @@ agent = Agent(
         'with their real id, title, and price. '
         'An empty list is a fine answer: say so in the note when nothing fits.'
     ),
-    capabilities=[Pixeltable(['market.listings'])],
+    capabilities=[
+        Pixeltable(['market.listings']),  # read-only search and queries over the listings
+        Memory(PixeltableMemoryStore(table_name='market.memory')),  # the agent's notes, kept across runs
+    ],
 )
 
 
