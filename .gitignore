@@ -3,3 +3,10 @@
 scratch/
 __pycache__/
 .env
+
+# Webinar prep: talk notes, sources, and slide assets stay local. Only webinar/steps.py is shared.
+webinar/outline.md
+webinar/slide-outline.md
+webinar/sources/
+webinar/assets/
+.DS_Store
