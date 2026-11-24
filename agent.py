@@ -2,7 +2,7 @@
 
 The agent searches and queries the app's listings table through the Pixeltable capability for
 Pydantic AI Harness, and answers as `Picks`. Its output validator checks each pick against the table.
-It keeps its notes across runs in a second Pixeltable table, `market.memory`.
+It keeps its notes across runs in a second Pixeltable table, `secondhand-lotus.memory`.
 """
 
 import sys
@@ -35,7 +35,7 @@ logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
 PixeltableInstrumentor().instrument(span_level='debug')
 
-TableModel.bind_all('market')
+TableModel.bind_all('secondhand-lotus')
 
 agent = Agent(
     f'google:{MODEL}',
@@ -47,8 +47,8 @@ agent = Agent(
         'An empty list is a fine answer: say so in the note when nothing fits.'
     ),
     capabilities=[
-        Pixeltable(['market.listings']),  # read-only search and queries over the listings
-        Memory(PixeltableMemoryStore(table_name='market.memory')),  # the agent's notes, kept across runs
+        Pixeltable(['secondhand-lotus.listings']),  # read-only search and queries over the listings
+        Memory(PixeltableMemoryStore(table_name='secondhand-lotus.memory')),  # the agent's notes, kept across runs
     ],
 )
 

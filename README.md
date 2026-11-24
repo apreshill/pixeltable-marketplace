@@ -1,4 +1,4 @@
-# pixeltable-marketplace
+# Secondhand Lotus
 
 A secondhand marketplace app. Sellers post photos, and Gemini writes the listing. Shoppers search the listings or ask for what they want.
 
@@ -87,8 +87,8 @@ If you use a coding agent, run `pxt skills install`. It adds the Pixeltable skil
 ### 2. Create the tables and start the app
 
 ```bash
-pxt schema update app.py market
-pxt service update app.py market
+pxt schema update app.py secondhand-lotus
+pxt service update app.py secondhand-lotus
 pxt service list
 ```
 
@@ -130,7 +130,7 @@ Run `curl` on the new `job_url`. The job fails with `INVALID_DATA_FORMAT` and `N
 Use the `id` from the finished job's `result` as `<listing_id>`:
 
 ```bash
-pxt get market/listings <listing_id> --cols title,price,narration,promo
+pxt get secondhand-lotus/listings <listing_id> --cols title,price,narration,promo
 ```
 
 `app.py` sets the `/listings` route to return four columns. The row in Pixeltable has every column, including `narration`, the audio of Gemini reading the pitch. `narration` and `promo` are file paths you can open.
@@ -147,12 +147,12 @@ python scripts/seed.py <url>
 
 If Gemini wrote free text, one listing might say "like-new" and another "barely used", and a filter would miss one of them. `json_config()` gives Gemini the JSON schema of `ListingDetails`, where `condition` can only be `new`, `like new`, `good` or `fair`. Because Gemini can't write any other value, one filter finds every like-new listing.
 
-Start a Python shell in this folder. `bind_all('market')` connects the table classes in `app.py` to the `market` tables you created in step 2:
+Start a Python shell in this folder. `bind_all('secondhand-lotus')` connects the table classes in `app.py` to the `secondhand-lotus` tables you created in step 2:
 
 ```python
 from app import Listings, TableModel
 
-TableModel.bind_all('market')
+TableModel.bind_all('secondhand-lotus')
 Listings.where(Listings.condition == 'like new').select(Listings.title, Listings.price).collect()
 ```
 
@@ -189,9 +189,9 @@ python agent.py "Something warm to read by, under \$150?"
 Edit `app.py`. Then see the plan, apply it to the tables, and restart the app on the new code:
 
 ```bash
-pxt schema diff app.py market
-pxt schema update app.py market
-pxt service update app.py market
+pxt schema diff app.py secondhand-lotus
+pxt schema update app.py secondhand-lotus
+pxt service update app.py secondhand-lotus
 ```
 
 The plan lists each change to each table, e.g. a computed column whose expression changed, and whether the change is safe or destructive. Stored listings keep their values; for a column whose expression changed, `pxt schema update` prints the `pxt recompute` command that brings them up to date.
@@ -204,7 +204,7 @@ Create a project in [Logfire](https://logfire.pydantic.dev), and make a write to
 export LOGFIRE_TOKEN=<your write token>
 export OTEL_EXPORTER_OTLP_ENDPOINT=https://logfire-us.pydantic.dev
 export OTEL_EXPORTER_OTLP_HEADERS="Authorization=$LOGFIRE_TOKEN"
-export OTEL_SERVICE_NAME=marketplace
+export OTEL_SERVICE_NAME=secondhand-lotus
 export OTEL_SPAN_LEVEL=debug
 ```
 
@@ -214,7 +214,7 @@ The Pixeltable daemon reads the environment only when it starts, so restart it. 
 
 ```bash
 pxt daemon restart
-pxt service update app.py market --otel
+pxt service update app.py secondhand-lotus --otel
 ```
 
 Post a listing as in step 3. In Logfire, the listing is a `pixeltable.insert` trace, with a span for each call Pixeltable made to fill the row's columns. Each span names its column. In one run, Gemini took 12.7 seconds to write `response`, 4.3 seconds to read the pitch into `narration`, and 1.6 seconds to embed the first photo for search. The `POST /listings` request is a separate trace, because the route returns a job before the insert runs.

@@ -1,13 +1,13 @@
 # ruff: noqa: F821  # TableModel class bodies refer to columns by name
-"""A secondhand marketplace on Pixeltable: the Pydantic models, the listings table, and its API.
+"""Secondhand Lotus, a secondhand marketplace on Pixeltable: the Pydantic models, the listings table, and its API.
 
 A seller posts three photos and a price. Gemini writes the listing's details in the shape of
 `ListingDetails`; Gemini finds the item in the first photo for a crop; and the photos become
 a narrated video. Shoppers search the photos in words or with a photo. agent.py is a Pydantic AI
 agent over the same table.
 
-    pxt schema update app.py market
-    pxt service update app.py market
+    pxt schema update app.py secondhand-lotus
+    pxt service update app.py secondhand-lotus
 """
 
 from typing import Literal
@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 MODEL = 'gemini-3.8-flash'
 TTS_MODEL = 'gemini-3.8-flash-tts'
 EMBEDDING_MODEL = 'gemini-embedding-2'
+IMAGE_MODEL = 'gemini-3.1-flash-image'
 
 class ListingDetails(BaseModel):
     """What Gemini writes from a seller's photos."""
@@ -61,6 +62,29 @@ DETAILS_PROMPT = 'Write a marketplace listing for the item in these photos. Desc
 BOX_PROMPT = (
     'Return the bounding box of this item in the photo. If the item is not visible, or most of it is hidden, '
     'return the whole photo: ymin 0, xmin 0, ymax 1000, xmax 1000. Item:'
+)
+# Filled in from each listing's details, then sent to Gemini, which writes the prompt for the image model.
+STAGING_TEMPLATE = (
+    'You are recreating a still from season 3 of The White Lotus, set at the White Lotus resort in Thailand. '
+    'The object: {title}; category: {category}; color: {color}; condition: {condition}. {description} '
+    'Use these to decide what the object is for and where a guest would use it; use only what the description '
+    'says about the object itself, not how it was photographed or lit. '
+    'Create a detailed prompt for an image generator following this structure: '
+    'Create an image of [the object] from the reference photo, unchanged and at its real size, placed '
+    '[where a guest staying here would actually use it] in a guest suite at the White Lotus resort in Thailand, '
+    'recreating the suite as it looks in the show, styled into the room by a set decorator. '
+    'First describe the suite: Southern Thai architecture with teak and terrazzo interiors, tropical rosewood '
+    'and teak furniture, silk accents, custom artwork, and open space, with tropical garden green beyond. '
+    'Then describe the object in that room, with signs that a guest has just stepped out: '
+    '[one or two small personal things left near it]. The object sits in the same light as everything else, '
+    'its shadow falling with the daylight. '
+    'Then describe the shot type and lens (eye level, 35mm, shallow depth of field, the object in sharp focus), '
+    'the lighting (soft late-morning daylight through louvered teak shutters, falling in slatted bands), '
+    'the color palette, and the mood. '
+    'The suite is unoccupied: a quiet room the guest has just left. '
+    'If the object has its own light, it is switched off. '
+    'Write only the prompt, no preamble or explanation. '
+    'Do not include text, typography, words, or people in the image.'
 )
 
 
@@ -139,6 +163,18 @@ class Listings(TableModel, name='listings'):
         narration,
     )
 
+    # The item staged in a White Lotus villa: the template filled in from this listing's details, a prompt
+    # Gemini writes from it, and the first photo staged by the image model, pulled out of its answer as an image.
+    staging_request = pxtf.string.format(
+        STAGING_TEMPLATE, title=title, category=category, color=color, condition=condition, description=description
+    )
+    staging_response = pxtf.gemini.generate_content(staging_request, model=MODEL)
+    staging_prompt = staging_response.candidates[0].content.parts[0].text.astype(pxt.String)
+    staged_response = pxtf.gemini.generate_content(
+        [staging_prompt, photo_1], model=IMAGE_MODEL, config={'response_modalities': ['IMAGE']}
+    )
+    staged_photo = staged_response.candidates[0].content.parts[0].inline_data.data.astype(pxt.Image)
+
     __indexes__ = [  # noqa: RUF012
         # Search by the first photo, from words or from another photo.
         pxt.EmbeddingIndex(photo_1, embedding=pxtf.gemini.embed_content.using(model=EMBEDDING_MODEL)),
@@ -175,7 +211,7 @@ def similar(photo: pxt.Image, limit: int = 5):
     )
 
 
-router = FastAPIRouter(name='market')
+router = FastAPIRouter(name='secondhand-lotus')
 router.add_insert_route(
     Listings,
     path='/listings',
@@ -188,7 +224,7 @@ router.add_query_route(path='/search', query=search, method='get')
 router.add_query_route(path='/similar', query=similar, uploadfile_inputs=['photo'])
 
 
-api = FastAPI(title='Marketplace')
+api = FastAPI(title='Secondhand Lotus')
 api.include_router(router)
 
 
